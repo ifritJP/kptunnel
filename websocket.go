@@ -87,13 +87,14 @@ func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param TunnelPa
     // proxyHost := "http://localhost:10080"
     // userAgent := "test"
 
-    log.Print( websocketUrl, proxyHost, userAgent )
+    log.Printf( "%s, %s, %s", websocketUrl, proxyHost, userAgent )
 
     conf, err := websocket.NewConfig( websocketUrl, "http://localhost" )
     if err != nil {
         log.Print( "NewConfig error", err )
         return nil, err
     }
+    var websock *websocket.Conn
     if proxyHost != "" {
         // proxy のセッション確立
         url, _ := url.Parse( proxyHost )
@@ -104,17 +105,18 @@ func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param TunnelPa
             return nil, err
         }
         // proxy セッション上に websocket 接続
-        websock, err := websocket.NewClient( conf, conn )
+        websock, err = websocket.NewClient( conf, conn )
         if err != nil {
             log.Print( "websocket error", websock, err )
             return nil, err
         }
-        return websock, nil
-    }
-    websock, err := websocket.DialConfig( conf )
-    if err != nil {
-        log.Print( "websocket error", websock, err )
-        return nil, err
+        //return websock, nil
+    } else {
+        websock, err = websocket.DialConfig( conf )
+        if err != nil {
+            log.Print( "websocket error", websock, err )
+            return nil, err
+        }
     }
     if err := ProcessClientAuth( websock, websock, param ); err != nil {
         log.Fatal(err)

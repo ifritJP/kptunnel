@@ -158,7 +158,7 @@ func generateChallengeResponse( challenge string, pass string ) string {
 	return base64.StdEncoding.EncodeToString( sum[:] )
 }
 
-const MAGIC = "hello\n"
+const MAGIC = "hello"
 
 func ProcessServerAuth( ostream io.Writer, istream io.Reader, param TunnelParam, remoteAddr string ) error {
 
@@ -170,7 +170,7 @@ func ProcessServerAuth( ostream io.Writer, istream io.Reader, param TunnelParam,
     }
 
     // 暗号パスワードチェック用データ送信
-    WriteItem( ostream, []byte(MAGIC), param.pass )
+    WriteItem( ostream, []byte(MAGIC), param.encPass )
 
     // challenge 文字列生成
     nano := time.Now().UnixNano()
@@ -179,13 +179,13 @@ func ProcessServerAuth( ostream io.Writer, istream io.Reader, param TunnelParam,
     challenge := AuthChallenge{ "1.00", str, param.Mode }
 
     bytes, _ := json.Marshal( challenge )
-    if err := WriteItem( ostream, bytes, param.pass ); err != nil {
+    if err := WriteItem( ostream, bytes, param.encPass ); err != nil {
         return err
     }
     log.Print( "challenge ", challenge.Challenge )
 
     // challenge-response 処理
-    reader, err := ReadItem( istream, param.pass )
+    reader, err := ReadItem( istream, param.encPass )
     if err != nil {
         return err
     }
@@ -196,14 +196,14 @@ func ProcessServerAuth( ostream io.Writer, istream io.Reader, param TunnelParam,
 
     if resp.Response != generateChallengeResponse( challenge.Challenge, param.pass ) {
         bytes, _ := json.Marshal( AuthResult{ "ng" } )
-        if err := WriteItem( ostream, bytes, param.pass ); err != nil {
+        if err := WriteItem( ostream, bytes, param.encPass ); err != nil {
             return err
         }
         log.Print( "mismatch password" )
         return fmt.Errorf("mismatch password" )
     }
     bytes, _ = json.Marshal( AuthResult{ "ok" } )
-    if err := WriteItem( ostream, bytes, param.pass ); err != nil {
+    if err := WriteItem( ostream, bytes, param.encPass ); err != nil {
         return err
     }
     log.Print( "match password" )
@@ -211,7 +211,7 @@ func ProcessServerAuth( ostream io.Writer, istream io.Reader, param TunnelParam,
 }
 
 func ProcessClientAuth( ostream io.Writer, istream io.Reader, param TunnelParam ) error {
-    reader, err := ReadItem( istream, param.pass )
+    reader, err := ReadItem( istream, param.encPass )
     if err != nil {
         return err
     }
@@ -221,7 +221,7 @@ func ProcessClientAuth( ostream io.Writer, istream io.Reader, param TunnelParam 
         return fmt.Errorf( "unmatch MAGIC %x", hello )
     }
     
-    reader, err = ReadItem( istream, param.pass )
+    reader, err = ReadItem( istream, param.encPass )
     if err != nil {
         return err
     }
@@ -251,12 +251,12 @@ func ProcessClientAuth( ostream io.Writer, istream io.Reader, param TunnelParam 
 
     resp := generateChallengeResponse( challenge.Challenge, param.pass )
     bytes, _ := json.Marshal( AuthResponse{ resp } )
-    if err := WriteItem( ostream, bytes, param.pass ); err != nil {
+    if err := WriteItem( ostream, bytes, param.encPass ); err != nil {
         return err
     }
 
     {
-        reader, err := ReadItem( istream, param.pass )
+        reader, err := ReadItem( istream, param.encPass )
         if err != nil {
             return err
         }

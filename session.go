@@ -11,6 +11,7 @@ import (
 )
 
 type TunnelParam struct {
+    encPass string
     pass string
     Mode string
     ipPattern *regexp.Regexp
@@ -116,7 +117,7 @@ func ListenNewConnect( tunnel io.ReadWriteCloser, port int, hostInfo HostInfo, p
     defer src.Close()
     log.Print("connected")
     
-    WriteHeader( tunnel, hostInfo, param.pass )
+    WriteHeader( tunnel, hostInfo, param.encPass )
     RelaySession( tunnel, src )
 
     log.Print("disconnected")
@@ -125,7 +126,7 @@ func ListenNewConnect( tunnel io.ReadWriteCloser, port int, hostInfo HostInfo, p
 }
 
 func NewConnectFromWith( tunnel io.ReadWriteCloser, param TunnelParam ) {
-    hostInfo, err := ReadHeader( tunnel, param.pass )
+    hostInfo, err := ReadHeader( tunnel, param.encPass )
     log.Print( "header ", hostInfo, err )
 
     dstAddr := fmt.Sprintf( "%s:%d", hostInfo.Name, hostInfo.Port )

@@ -8,8 +8,12 @@ func main() {
 
     mode := flag.String( "mode", "server", "<server|client>" )
     server := flag.String( "server", "localhost", "server" )
+
+
+    
     tunnelPort := flag.Int( "port", 8000, "tunnel port" )
     pass := flag.String( "pass", "hogehoge", "password" )
+    encPass := flag.String( "encPass", "hogehoge", "packet encrypt pass" )
     ipPattern := flag.String( "ip", "", "allow ip pattern" )
     proxyHost := flag.String( "proxy", "", "proxy server" )
     flag.Parse()
@@ -19,13 +23,13 @@ func main() {
     dstPort := 22
     hostInfo := HostInfo{ "", "localhost", dstPort, "" }
     serverInfo := HostInfo{ "http://", *server, *tunnelPort, "" }
-    websocketServerInfo := HostInfo{ "ws://", "localhost", *tunnelPort, "/" }
+    websocketServerInfo := HostInfo{ "ws://", *server, *tunnelPort, "/" }
     var pattern *regexp.Regexp
     if *ipPattern != "" {
         pattern = regexp.MustCompile( *ipPattern )
     }
-    param := TunnelParam{ *pass, *mode, pattern }
-    
+    param := TunnelParam{ *encPass, *pass, *mode, pattern }
+
     switch *mode {
     case "server":
         StartServer( param, *tunnelPort )
