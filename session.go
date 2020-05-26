@@ -241,14 +241,27 @@ func RelaySession( connInfo *ConnInfo, local io.ReadWriteCloser, sessionId int, 
 
 func CreateToReconnectFunc( reconnect func() (*ConnInfo, error) ) func( sessionId int ) *ConnInfo {
     return func( sessionId int ) *ConnInfo {
+        timeList := []time.Duration {
+            500 * time.Millisecond,
+            1000 * time.Millisecond,
+            2000 * time.Millisecond,
+            5000 * time.Millisecond,
+        }
+        index := 0
         for {
-            log.Print( "reconnecting... session: ", sessionId )
+            timeout := timeList[ index ]
+            log.Printf(
+                "reconnecting... session: %d, timeout: %v sec",
+                sessionId, timeout / 1000.0 )
             connInfo, err := reconnect()
             if err == nil {
                 log.Print( "reconnect -- ok session: ", sessionId )
                 return connInfo
             }
-            time.Sleep( 5 * time.Second )
+            time.Sleep( timeout )
+            if index < len( timeList ) - 1 {
+                index++
+            }
         }
     }
 }
