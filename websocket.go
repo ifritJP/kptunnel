@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"golang.org/x/net/proxy"
     "golang.org/x/net/websocket"
+    "encoding/base64"
 )
 
 // Echo the data received on the WebSocket.
@@ -57,7 +58,9 @@ func (info *proxyInfo) Dial(network, addr string) (net.Conn, error) {
         req.Close = false
         if info.url.User != nil {
             pass, _ := info.url.User.Password()
-            req.SetBasicAuth(info.url.User.Username(), pass )
+            auth := fmt.Sprintf( "%s:%s", info.url.User.Username(), pass )
+            basicAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
+            req.Header.Set("Proxy-Authorization", basicAuth)
         }
         req.Header.Set("User-Agent", info.userAgent )
         err = req.Write(conn)
@@ -82,7 +85,7 @@ func (info *proxyInfo) Dial(network, addr string) (net.Conn, error) {
     return conn, nil
 }
 
-func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param TunnelParam ) (*websocket.Conn, error) {
+func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param *TunnelParam ) (*ConnInfo, error) {
     // websocketUrl := "ws://localhost:12345/echo"
     // proxyHost := "http://localhost:10080"
     // userAgent := "test"
@@ -118,11 +121,12 @@ func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param TunnelPa
             return nil, err
         }
     }
-    if err := ProcessClientAuth( websock, websock, param ); err != nil {
+    connInfo := &ConnInfo{ websock, CreateCryptCtrl( param.encPass, param.encCount ) }
+    if err := ProcessClientAuth( connInfo, param ); err != nil {
         log.Fatal(err)
         websock.Close()
         return nil, err
     }
     
-    return websock, nil
+    return connInfo, nil
 }
