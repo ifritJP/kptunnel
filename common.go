@@ -187,6 +187,27 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
         }
     }
 
+    log.Print( "start auth" )
+
+    {
+        // proxy 経由の websocket だと、
+        // 最初のデータが正常に送信されないことがある。
+        // WriteItem() を使うと、データ長とペアで送信されるが、
+        // そのデータが不正になり、タイムアウトするまで戻ってこない。
+        // よって、最初のデータにどれだけズレがあるかを確認するための
+        // バイト列を出力する。
+        bytes := make( []byte, 10 )
+        for index := 0; index < len( bytes ); index++ {
+            bytes[ index ] = byte(index)
+        }
+        if _, err := stream.Write( bytes ); err != nil {
+            return false, err
+        }
+        if _, err := stream.Write( bytes ); err != nil {
+            return false, err
+        }
+    }
+    
     // 暗号パスワードチェック用データ送信
     WriteItem( stream, []byte(MAGIC), connInfo.CryptCtrlObj )
 
@@ -245,7 +266,37 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
 }
 
 func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
+
+    log.Print( "start auth" )
+    
     stream := connInfo.Conn
+
+    {
+        // proxy 経由の websocket だと、
+        // 最初のデータが正常に送信されないことがある。
+        // ここで、最初のデータにどれだけズレがあるかを確認する。
+        
+        buf := make( []byte, 10 )
+        if _, err := io.ReadFull( stream, buf ); err != nil {
+            return err
+        }
+        log.Printf( "num: %x\n", buf )
+        offset := int(buf[0])
+        log.Printf( "offset: %d\n", offset )
+        if offset >= 10 {
+            return fmt.Errorf( "illegal num -- %d", offset )
+        }
+        if _, err := io.ReadFull( stream, buf[ :10-offset] ); err != nil {
+            return err
+        }
+        for index := 0; index < 10 - offset; index++ {
+            if int(buf[ index ]) != offset + index {
+                return fmt.Errorf(
+                    "unmatch num -- offset %d: %d != %d", offset, index, buf[ index ] )
+            }
+        }
+    }
+    
     reader, err := ReadItem( stream, connInfo.CryptCtrlObj )
     if err != nil {
         return err
@@ -257,6 +308,7 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
     }
     
     reader, err = ReadItem( stream, connInfo.CryptCtrlObj )
+    log.Print( "read challenge" )
     if err != nil {
         return err
     }
@@ -291,6 +343,7 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
     }
 
     {
+        log.Print( "read auth result" )
         reader, err := ReadItem( stream, connInfo.CryptCtrlObj )
         if err != nil {
             return err

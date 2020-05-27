@@ -63,11 +63,15 @@ func (info *proxyInfo) Dial(network, addr string) (net.Conn, error) {
             req.Header.Set("Proxy-Authorization", basicAuth)
         }
         req.Header.Set("User-Agent", info.userAgent )
+
+        log.Print( "proxy write" )
         err = req.Write(conn)
         if err != nil {
             return err
         }
+        log.Print( "proxy wait the response" )
         resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+        log.Print( "proxy read the response" )
         defer resp.Body.Close()
         if err != nil {
             return err
@@ -123,7 +127,7 @@ func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param *TunnelP
     }
     connInfo := &ConnInfo{ websock, CreateCryptCtrl( param.encPass, param.encCount ) }
     if err := ProcessClientAuth( connInfo, param ); err != nil {
-        log.Fatal(err)
+        log.Print(err)
         websock.Close()
         return nil, err
     }

@@ -18,7 +18,7 @@ func connectTunnel( serverInfo HostInfo, param *TunnelParam ) ( *ConnInfo, error
 
     connInfo := &ConnInfo{ tunnel, CreateCryptCtrl( param.encPass, param.encCount ) }
     if err := ProcessClientAuth( connInfo, param ); err != nil {
-        log.Fatal(err)
+        log.Print(err)
         tunnel.Close()
         return nil, err
     }

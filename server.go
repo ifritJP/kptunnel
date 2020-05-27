@@ -22,10 +22,11 @@ func StartEchoServer(port int) {
 			log.Fatal(err)
 		}
         log.Print("connected")
-		go func(tunnel net.Conn) {
+        go func(tunnel net.Conn) {
+            defer tunnel.Close()
             io.Copy( tunnel, tunnel )
             log.Print( "closed" )
-		}(conn)
+        }(conn)
 	}
 }
 

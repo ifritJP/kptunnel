@@ -205,6 +205,10 @@ func stream2Tunnel( src io.Reader, info *tunnelInfo ) {
             info.writeData( make([]byte,0))
             break
         }
+        if readSize == 0 {
+            log.Print( "ignore 0 size packet." )
+            continue
+        }
         for {
             writeerr := info.writeData( buf[:readSize] )
             if writeerr != nil {
@@ -251,8 +255,7 @@ func CreateToReconnectFunc( reconnect func() (*ConnInfo, error) ) func( sessionI
         for {
             timeout := timeList[ index ]
             log.Printf(
-                "reconnecting... session: %d, timeout: %v sec",
-                sessionId, timeout / 1000.0 )
+                "reconnecting... session: %d, timeout: %v", sessionId, timeout )
             connInfo, err := reconnect()
             if err == nil {
                 log.Print( "reconnect -- ok session: ", sessionId )
@@ -308,32 +311,34 @@ func JoinUntilToCloseConn( conn io.ReadWriteCloser ) {
 }
 
 func ListenNewConnect( connInfo *ConnInfo, port int, hostInfo HostInfo, param *TunnelParam, reconnect func( sessionId int ) *ConnInfo ) {
+    defer connInfo.Conn.Close()
+
     local, err := net.Listen("tcp", fmt.Sprintf( ":%d", port ) )
     if err != nil {
-        log.Fatal(err)
-    }
-    dummy := func () {
-        local.Close(); log.Print( "close local" )
-    }
-    //defer local.Close()
-    defer dummy()
+        log.Print(err)
+    } else {
+        dummy := func () {
+            local.Close(); log.Print( "close local" )
+        }
+        //defer local.Close()
+        defer dummy()
 
-    log.Printf( "wating with %d\n", port )
-    src, err := local.Accept()
-    if err != nil {
-        log.Fatal(err)
+        log.Printf( "wating with %d\n", port )
+        src, err := local.Accept()
+        if err != nil {
+            log.Fatal(err)
+        }
+
+        defer src.Close()
+        log.Print("connected")
+        
+        WriteHeader( connInfo.Conn, hostInfo, connInfo.CryptCtrlObj )
+        RelaySession(
+            connInfo, src, param.sessionId,
+            func() *ConnInfo { return reconnect( param.sessionId ) } )
+
+        log.Print("disconnected")
     }
-    defer src.Close()
-    log.Print("connected")
-    
-    WriteHeader( connInfo.Conn, hostInfo, connInfo.CryptCtrlObj )
-    RelaySession(
-        connInfo, src, param.sessionId,
-        func() *ConnInfo { return reconnect( param.sessionId ) } )
-
-    log.Print("disconnected")
-
-    connInfo.Conn.Close()
 }
 
 func NewConnectFromWith( connInfo *ConnInfo, param *TunnelParam, reconnect func( sessionId int ) *ConnInfo ) {
