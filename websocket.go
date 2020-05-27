@@ -89,7 +89,7 @@ func (info *proxyInfo) Dial(network, addr string) (net.Conn, error) {
     return conn, nil
 }
 
-func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param *TunnelParam ) (*ConnInfo, error) {
+func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param *TunnelParam, sessionInfo *SessionInfo ) (*ConnInfo, error) {
     // websocketUrl := "ws://localhost:12345/echo"
     // proxyHost := "http://localhost:10080"
     // userAgent := "test"
@@ -125,7 +125,7 @@ func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param *TunnelP
             return nil, err
         }
     }
-    connInfo := &ConnInfo{ websock, CreateCryptCtrl( param.encPass, param.encCount ) }
+    connInfo := CreateConnInfo( websock, param.encPass, param.encCount, sessionInfo )
     if err := ProcessClientAuth( connInfo, param ); err != nil {
         log.Print(err)
         websock.Close()

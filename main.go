@@ -61,9 +61,10 @@ func main() {
     case "echo":
         StartEchoServer( echoPort )
     case "test":
-        ctrl := CreateCryptCtrl( pass, 10 )
-        enc := ctrl.Encrypt( []byte( "abcdefg" ) )
-        raw := ctrl.Decrypt( enc )
-        fmt.Printf( "%x, %s\n", enc, string(raw) )
+        for index := 0; index < 2; index++ {
+            val := make([]byte,10)
+            fmt.Printf( "%p\n", val )
+        }
+            
     }
 }

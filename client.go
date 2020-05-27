@@ -8,7 +8,7 @@ import (
     //"io"
 )
 
-func connectTunnel( serverInfo HostInfo, param *TunnelParam ) ( *ConnInfo, error) {
+func connectTunnel( serverInfo HostInfo, param *TunnelParam, sessionInfo *SessionInfo) ( *ConnInfo, error) {
     log.Printf( "start client --- %d", serverInfo.Port )
     tunnel, err := net.Dial("tcp", fmt.Sprintf( "%s:%d", serverInfo.Name, serverInfo.Port ))
     if err != nil {
@@ -16,7 +16,7 @@ func connectTunnel( serverInfo HostInfo, param *TunnelParam ) ( *ConnInfo, error
     }
     log.Print( "connected to server" )
 
-    connInfo := &ConnInfo{ tunnel, CreateCryptCtrl( param.encPass, param.encCount ) }
+    connInfo := CreateConnInfo( tunnel, param.encPass, param.encCount, sessionInfo )
     if err := ProcessClientAuth( connInfo, param ); err != nil {
         log.Print(err)
         tunnel.Close()
@@ -28,15 +28,15 @@ func connectTunnel( serverInfo HostInfo, param *TunnelParam ) ( *ConnInfo, error
 func StartClient( param *TunnelParam, serverInfo HostInfo, port int, hostInfo HostInfo ) {
     for {
         sessionParam := *param
-        connInfo, err := connectTunnel( serverInfo, &sessionParam )
+        connInfo, err := connectTunnel( serverInfo, &sessionParam, nil )
         if err != nil {
             break
         }
         defer connInfo.Conn.Close()
 
         reconnect := CreateToReconnectFunc(
-            func() (*ConnInfo, error) {
-                return connectTunnel( serverInfo, &sessionParam )
+            func( sessionInfo *SessionInfo ) (*ConnInfo, error) {
+                return connectTunnel( serverInfo, &sessionParam, nil )
             })
         ListenNewConnect( connInfo, port, hostInfo, &sessionParam, reconnect )
     }
@@ -46,15 +46,15 @@ func StartClient( param *TunnelParam, serverInfo HostInfo, port int, hostInfo Ho
 func StartReverseClient( param *TunnelParam, serverInfo HostInfo ) {
     for {
         sessionParam := *param
-        connInfo, err := connectTunnel( serverInfo, &sessionParam )
+        connInfo, err := connectTunnel( serverInfo, &sessionParam, nil )
         if err != nil {
             break
         }
         defer connInfo.Conn.Close()
 
         reconnect := CreateToReconnectFunc(
-            func() (*ConnInfo, error) {
-                return connectTunnel( serverInfo, &sessionParam )
+            func( sessionInfo *SessionInfo ) (*ConnInfo, error) {
+                return connectTunnel( serverInfo, &sessionParam, nil )
             })
         NewConnectFromWith( connInfo, &sessionParam, reconnect )
     }
@@ -65,16 +65,16 @@ func StartWebSocketClient( userAgent string, param *TunnelParam, serverInfo Host
 
     for {
         sessionParam := *param
-        connInfo, err := ConnectWebScoket( serverInfo.toStr(), proxyHost, userAgent, &sessionParam )
+        connInfo, err := ConnectWebScoket( serverInfo.toStr(), proxyHost, userAgent, &sessionParam, nil )
         if err != nil {
             break
         }
         defer connInfo.Conn.Close()
     
         reconnect := CreateToReconnectFunc(
-            func() (*ConnInfo, error) {
+            func( sessionInfo *SessionInfo ) (*ConnInfo, error) {
                 return ConnectWebScoket(
-                    serverInfo.toStr(), proxyHost, userAgent, &sessionParam )
+                    serverInfo.toStr(), proxyHost, userAgent, &sessionParam, sessionInfo )
             })
 
         ListenNewConnect( connInfo, port, hostInfo, &sessionParam, reconnect )
@@ -85,16 +85,16 @@ func StartReverseWebSocketClient( userAgent string, param *TunnelParam, serverIn
     for {
         sessionParam := *param
         
-        connInfo, err := ConnectWebScoket( serverInfo.toStr(), proxyHost, userAgent, &sessionParam )
+        connInfo, err := ConnectWebScoket( serverInfo.toStr(), proxyHost, userAgent, &sessionParam, nil )
         if err != nil {
             break
         }
         defer connInfo.Conn.Close()
         
         reconnect := CreateToReconnectFunc(
-            func() (*ConnInfo, error) {
+            func( sessionInfo *SessionInfo ) (*ConnInfo, error) {
                 return ConnectWebScoket(
-                    serverInfo.toStr(), proxyHost, userAgent, &sessionParam )
+                    serverInfo.toStr(), proxyHost, userAgent, &sessionParam, sessionInfo )
             })
         NewConnectFromWith( connInfo, &sessionParam, reconnect )
     }

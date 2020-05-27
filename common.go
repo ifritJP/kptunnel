@@ -158,12 +158,16 @@ type AuthResponse struct {
     // 
     Response string
     SessionId int
+    WriteNo int64
+    ReadNo int64
 }
 
 // server -> client
 type AuthResult struct {
     Result string
     SessionId int
+    WriteNo int64
+    ReadNo int64
 }
 
 
@@ -174,8 +178,6 @@ func generateChallengeResponse( challenge string, pass *string ) string {
 }
 
 const MAGIC = "hello"
-
-var nextSessionId = 0
 
 func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr string ) (bool,error) {
 
@@ -196,15 +198,16 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
         // そのデータが不正になり、タイムアウトするまで戻ってこない。
         // よって、最初のデータにどれだけズレがあるかを確認するための
         // バイト列を出力する。
-        bytes := make( []byte, 10 )
-        for index := 0; index < len( bytes ); index++ {
-            bytes[ index ] = byte(index)
-        }
-        if _, err := stream.Write( bytes ); err != nil {
-            return false, err
-        }
-        if _, err := stream.Write( bytes ); err != nil {
-            return false, err
+        bytes := make( []byte, 1 )
+        for subIndex := 0; subIndex < 2; subIndex++ {
+            for index := 0; index < 10; index++ {
+                // stream の write ごとに取りこぼしているようなので、
+                // 1バイトづつ出力する
+                bytes[ 0 ] = byte(index)
+                if _, err := stream.Write( bytes ); err != nil {
+                    return false, err
+                }
+            }
         }
     }
     
@@ -235,21 +238,29 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
     sessionId := resp.SessionId
     newSession := false
     if sessionId == 0 {
-        nextSessionId++
-        sessionId = nextSessionId
+        connInfo.SessionInfo = NewSessionInfo()
+        sessionId = connInfo.SessionInfo.SessionId
         newSession = true
+    } else {
+        connInfo.SessionInfo = GetSessionInfo( sessionId )
     }
-    log.Print( "sessionId: ", sessionId )
+    log.Printf(
+        "sessionId: %d, ReadNo: %d(%d), WriteNo: %d(%d)",
+        sessionId, connInfo.SessionInfo.ReadNo, resp.WriteNo,
+        connInfo.SessionInfo.WriteNo, resp.ReadNo )
 
     if resp.Response != generateChallengeResponse( challenge.Challenge, param.pass ) {
-        bytes, _ := json.Marshal( AuthResult{ "ng", 0 } )
+        bytes, _ := json.Marshal( AuthResult{ "ng", 0, 0, 0 } )
         if err := WriteItem( stream, bytes, connInfo.CryptCtrlObj ); err != nil {
             return false, err
         }
         log.Print( "mismatch password" )
         return false, fmt.Errorf("mismatch password" )
     }
-    bytes, _ = json.Marshal( AuthResult{ "ok", sessionId } )
+    bytes, _ = json.Marshal(
+        AuthResult{
+            "ok", sessionId,
+            connInfo.SessionInfo.WriteNo, connInfo.SessionInfo.ReadNo } )
     if err := WriteItem( stream, bytes, connInfo.CryptCtrlObj ); err != nil {
         return false, err
     }
@@ -257,8 +268,10 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
 
     param.sessionId = sessionId
 
+    connInfo.SessionInfo.SetReWrite( resp.ReadNo )
+    
+    SetSessionConn( sessionId, connInfo )
     if !newSession {
-        SetSessionConn( sessionId, connInfo )
         JoinUntilToCloseConn( stream )
     }
     
@@ -289,6 +302,7 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
         if _, err := io.ReadFull( stream, buf[ :10-offset] ); err != nil {
             return err
         }
+        log.Printf( "num2: %x\n", buf )
         for index := 0; index < 10 - offset; index++ {
             if int(buf[ index ]) != offset + index {
                 return fmt.Errorf(
@@ -337,7 +351,10 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
     }
 
     resp := generateChallengeResponse( challenge.Challenge, param.pass )
-    bytes, _ := json.Marshal( AuthResponse{ resp, param.sessionId } )
+    bytes, _ := json.Marshal(
+        AuthResponse{
+            resp, param.sessionId,
+            connInfo.SessionInfo.WriteNo, connInfo.SessionInfo.ReadNo } )
     if err := WriteItem( stream, bytes, connInfo.CryptCtrlObj ); err != nil {
         return err
     }
@@ -355,7 +372,14 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
         if result.Result != "ok" {
             return fmt.Errorf( "failed to auth -- %s", result.Result )
         }
+
         param.sessionId = result.SessionId
+
+        log.Printf(
+            "sessionId: %d, ReadNo: %d(%d), WriteNo: %d(%d)",
+            result.SessionId, connInfo.SessionInfo.ReadNo, result.WriteNo,
+            connInfo.SessionInfo.WriteNo, result.ReadNo )
+        connInfo.SessionInfo.SetReWrite( result.ReadNo )
     }
     
     return nil

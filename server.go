@@ -44,7 +44,7 @@ func StartServer(param *TunnelParam, port int) {
 		if err != nil {
 			log.Fatal(err)
 		}
-        connInfo := &ConnInfo{ conn, CreateCryptCtrl( param.encPass, param.encCount ) }
+        connInfo := CreateConnInfo( conn, param.encPass, param.encCount, nil )
         
         log.Print("connected -- ", conn.RemoteAddr() )
         tunnelParam := *param
@@ -76,7 +76,7 @@ func StartReverseServer( param *TunnelParam, tunnelPort int, connectPort int, ho
             log.Fatal(err)
         }
         log.Print("connected -- ", conn.RemoteAddr() )
-        connInfo := &ConnInfo{ conn, CreateCryptCtrl( param.encPass, param.encCount ) }
+        connInfo := CreateConnInfo( conn, param.encPass, param.encCount, nil )
         
         tunnelParam := *param
         newSession := false
@@ -123,8 +123,7 @@ func StartWebsocketServer( param *TunnelParam, tunnelPort int ) {
     handle := func( ws *websocket.Conn, remoteAddr string ) {
         tunnelParam := *param
 
-        connInfo := &ConnInfo{
-            ws, CreateCryptCtrl( tunnelParam.encPass, tunnelParam.encCount ) }
+        connInfo := CreateConnInfo( ws, tunnelParam.encPass, tunnelParam.encCount, nil )
         
         if newSession, err := ProcessServerAuth( connInfo, &tunnelParam, remoteAddr ); err != nil {
             log.Print( "auth error: ", err );
@@ -136,11 +135,6 @@ func StartWebsocketServer( param *TunnelParam, tunnelPort int ) {
         }
     }
     startWebsocket( param, tunnelPort, handle )
-    // http.Handle("/", websocket.Handler( handle ))
-    // err := http.ListenAndServe( fmt.Sprintf( ":%d", tunnelPort ), nil)
-    // if err != nil {
-    //     panic("ListenAndServe: " + err.Error())
-    // }
 }
 
 func StartReverseWebSocketServer( param *TunnelParam, tunnelPort int, connectPort int, hostInfo HostInfo ) {
@@ -148,8 +142,7 @@ func StartReverseWebSocketServer( param *TunnelParam, tunnelPort int, connectPor
 
     handle := func( ws *websocket.Conn, remoteAddr string ) {
         tunnelParam := *param
-        connInfo := &ConnInfo{
-            ws, CreateCryptCtrl( tunnelParam.encPass, tunnelParam.encCount ) }
+        connInfo := CreateConnInfo( ws, tunnelParam.encPass, tunnelParam.encCount, nil )
         
         if newSession, err := ProcessServerAuth( connInfo, &tunnelParam, remoteAddr ); err != nil {
             log.Print( "auth error: ", err );
@@ -161,9 +154,4 @@ func StartReverseWebSocketServer( param *TunnelParam, tunnelPort int, connectPor
         }
     }
     startWebsocket( param, tunnelPort, handle )
-    // http.Handle("/", websocket.Handler( handle ))
-    // err := http.ListenAndServe( fmt.Sprintf( ":%d", tunnelPort ), nil)
-    // if err != nil {
-    //     panic("ListenAndServe: " + err.Error())
-    // }
 }
