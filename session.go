@@ -405,6 +405,7 @@ func tunnel2Stream( info *pipeInfo, dst io.Writer ) {
                     "tunnel read err log: readNo=%d, err=%s",
                     sessionInfo.ReadNo, readerr )
                 end := false
+                connInfo.Conn.Close()
                 connInfo, rev, end = info.reconnect( rev )
                 if end {
                     readSize = 0
@@ -452,6 +453,7 @@ func rewirte2Tunnel( info *pipeInfo, connInfo *ConnInfo, rev int ) bool {
                     connInfo.Conn, packet.bytes, connInfo.CryptCtrlObj )
                 if err != nil {
                     end := false
+                    connInfo.Conn.Close()                    
                     connInfo, rev, end = info.reconnect( rev )
                     if end {
                         return false
