@@ -23,8 +23,6 @@ type TunnelParam struct {
     // 接続可能な IP パターン。
     // nil の場合、 IP 制限しない。
     ipPattern *regexp.Regexp
-    // このセッション ID
-    sessionId int
     // セッションの通信を暗号化するパスワード
     encPass *string
     // セッションの通信を暗号化する通信数。
@@ -285,7 +283,7 @@ func (tunnel *pipeInfo) readData( info *ConnInfo, bytes []byte ) ([]byte, error)
 // @return ConnInfo 再接続後のコネクション
 // @return int 再接続後のリビジョン
 // @return bool セッションを終了するかどうか。終了する場合 true
-func (info *pipeInfo) reconnect( rev int ) (*ConnInfo,int,bool) {
+func (info *pipeInfo) reconnect( txt string, rev int ) (*ConnInfo,int,bool) {
     log.Print( "reconnect -- rev: ", rev )
     
     info.mutex.Lock()
@@ -334,7 +332,7 @@ func (info *pipeInfo) reconnect( rev int ) (*ConnInfo,int,bool) {
         }
     }
 
-    log.Printf( "connected: rev -- %d, end -- %v", workRev, info.end )
+    log.Printf( "connected: [%s] rev -- %d, end -- %v", txt, workRev, info.end )
     return workConnInfo, workRev, info.end
 }
 
@@ -406,7 +404,7 @@ func tunnel2Stream( info *pipeInfo, dst io.Writer ) {
                     sessionInfo.ReadNo, readerr )
                 end := false
                 connInfo.Conn.Close()
-                connInfo, rev, end = info.reconnect( rev )
+                connInfo, rev, end = info.reconnect( "read", rev )
                 if end {
                     readSize = 0
                     break
@@ -415,6 +413,7 @@ func tunnel2Stream( info *pipeInfo, dst io.Writer ) {
                 readSize = len( readBuf )
                 break
             }
+            log.Print( "retry to read -- ", sessionInfo.ReadNo )
         }
         if readSize == 0 {
             info.end = true
@@ -436,6 +435,7 @@ func tunnel2Stream( info *pipeInfo, dst io.Writer ) {
 // @param info pipe 情報
 // @param connInfo コネクション情報
 // @param rev リビジョン
+// @return bool 処理を続ける場合 true
 func rewirte2Tunnel( info *pipeInfo, connInfo *ConnInfo, rev int ) bool {
     // 再接続後にパケットの再送を行なう
     sessionInfo := connInfo.SessionInfo
@@ -454,7 +454,7 @@ func rewirte2Tunnel( info *pipeInfo, connInfo *ConnInfo, rev int ) bool {
                 if err != nil {
                     end := false
                     connInfo.Conn.Close()                    
-                    connInfo, rev, end = info.reconnect( rev )
+                    connInfo, rev, end = info.reconnect( "rewrite", rev )
                     if end {
                         return false
                     }
@@ -510,7 +510,7 @@ func stream2Tunnel( src io.Reader, info *pipeInfo ) {
                 log.Printf(
                     "tunnel write err log: writeNo=%d, err=%s",
                     sessionInfo.WriteNo, writeerr )
-                connInfo, rev, end = info.reconnect( rev )
+                connInfo, rev, end = info.reconnect( "write", rev )
                 if end {
                     break
                 }
@@ -520,6 +520,7 @@ func stream2Tunnel( src io.Reader, info *pipeInfo ) {
             } else {
                 break
             }
+            log.Print( "retry to write -- ", sessionInfo.WriteNo )
         }
     }
     info.fin <- true

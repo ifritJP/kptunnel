@@ -56,6 +56,10 @@ type CryptCtrl struct {
     dec CryptMode
 }
 
+// 暗号用のオブジェクトを生成する
+//
+// @param pass パスワード
+// @param count 暗回化回数
 func CreateCryptCtrl( pass *string, count int ) *CryptCtrl {
     if pass == nil || count == 0 {
         return nil
@@ -82,6 +86,11 @@ func CreateCryptCtrl( pass *string, count int ) *CryptCtrl {
     return &ctrl
 }
 
+// 暗号・複合処理
+//
+// 戻り値として変換後の値が返るが、これは CryptMode の work バッファ。
+// つまり、この変換後の値を処理する前に、連続して暗号・複合処理を行なうと、
+// 変換後のデータが上書きされる。
 func (mode *CryptMode) Process( bytes []byte ) []byte {
     if len(bytes) > len(mode.work) {
         panic( fmt.Errorf( "over length" ) )
@@ -102,14 +111,21 @@ func (mode *CryptMode) Process( bytes []byte ) []byte {
 }
 
 
+// 暗号化
 func (ctrl *CryptCtrl) Encrypt( bytes []byte ) []byte {
     return ctrl.enc.Process( bytes )
 }
 
+// 複合化
 func (ctrl *CryptCtrl) Decrypt( bytes []byte ) []byte {
     return ctrl.dec.Process( bytes )
 }       
 
+// データを出力する
+//
+// ostream 出力先
+// bytes データ
+// ctrl 暗号化情報
 func WriteItem( ostream io.Writer, bytes []byte, ctrl *CryptCtrl ) error {
     if ctrl != nil {
         bytes = ctrl.enc.Process( bytes )
@@ -122,11 +138,13 @@ func WriteItem( ostream io.Writer, bytes []byte, ctrl *CryptCtrl ) error {
     return err
 }
 
+// ヘッダを書き込む
 func WriteHeader( con io.Writer, hostInfo HostInfo, ctrl *CryptCtrl ) error {
     bytes, _ := json.Marshal( hostInfo )
     return WriteItem( con, bytes, ctrl )
 }
 
+// データを読み込む
 func ReadItem( istream io.Reader, ctrl *CryptCtrl ) (io.Reader,error) {
     buf := make([]byte,2)
     _, error := io.ReadFull( istream, buf )
@@ -145,6 +163,7 @@ func ReadItem( istream io.Reader, ctrl *CryptCtrl ) (io.Reader,error) {
     return bytes.NewReader( headerBuf ), nil
 }
 
+// ヘッダを読み取る
 func ReadHeader( con io.Reader, ctrl *CryptCtrl ) (*HostInfo, error) {
     hostInfo := &HostInfo{}
 
@@ -192,10 +211,21 @@ func generateChallengeResponse( challenge string, pass *string ) string {
 
 const MAGIC = "hello"
 
+
+// サーバ側のネゴシエーション処理
+//
+// 接続しに来たクライアントの認証を行なう。
+//
+// @param connInfo 接続コネクション情報
+// @param param Tunnel情報
+// @param remoteAddr 接続元のアドレス
+// @return bool ネゴシエーション成功した場合 true
+// @return error
 func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr string ) (bool,error) {
 
     stream := connInfo.Conn
     if param.ipPattern != nil {
+        // 接続元のアドレスをチェックする
         addr := fmt.Sprintf( "%v", remoteAddr )
         if ! param.ipPattern.MatchString( addr ) {
             return false, fmt.Errorf( "unmatch ip -- %s", addr )
@@ -206,16 +236,19 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
 
     {
         // proxy 経由の websocket だと、
-        // 最初のデータが正常に送信されないことがある。
-        // WriteItem() を使うと、データ長とペアで送信されるが、
-        // そのデータが不正になり、タイムアウトするまで戻ってこない。
-        // よって、最初のデータにどれだけズレがあるかを確認するための
+        // 最初のデータが欠けることがある。
+        // proxy サーバの影響か、 websocket の実装上の問題か？
+        // proxy サーバの問題な気がするが。。 
+        // WriteItem() を使うと、データ長とデータがペアで送信されるが、
+        // データが欠けることでデータ長とデータに不整合が発生し、
+        // 存在しないデータ長を読みこもうとして、タイムアウトするまで戻ってこない。
+        // そこで、最初のデータにどれだけズレがあるかを確認するための
         // バイト列を出力する。
+        // 0x00 〜 0x09 を2回出力する。
         bytes := make( []byte, 1 )
         for subIndex := 0; subIndex < 2; subIndex++ {
             for index := 0; index < 10; index++ {
-                // stream の write ごとに取りこぼしているようなので、
-                // 1バイトづつ出力する
+                // stream の write ごとに欠けるようなので、1 バイトづつ出力する
                 bytes[ 0 ] = byte(index)
                 if _, err := stream.Write( bytes ); err != nil {
                     return false, err
@@ -223,8 +256,9 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
             }
         }
     }
-    
-    // 暗号パスワードチェック用データ送信
+
+    // 共通文字列を暗号化して送信することで、
+    // 接続先の暗号パスワードが一致しているかチェック出来るようにデータ送信
     WriteItem( stream, []byte(MAGIC), connInfo.CryptCtrlObj )
 
     // challenge 文字列生成
@@ -248,9 +282,24 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
     if err := json.NewDecoder( reader ).Decode( &resp ); err != nil {
         return false, err
     }
+    if resp.Response != generateChallengeResponse( challenge.Challenge, param.pass ) {
+        // challenge-response が不一致なので、認証失敗
+        bytes, _ := json.Marshal( AuthResult{ "ng", 0, 0, 0 } )
+        if err := WriteItem( stream, bytes, connInfo.CryptCtrlObj ); err != nil {
+            return false, err
+        }
+        log.Print( "mismatch password" )
+        return false, fmt.Errorf("mismatch password" )
+    }
+
+    // ここまででクライアントの認証が成功したので、
+    // これ以降はクライアントが通知してきた情報を受けいれて OK
+
+    // クライアントが送ってきた sessionId を取り入れる
     sessionId := resp.SessionId
     newSession := false
     if sessionId == 0 {
+        // sessionId が 0 なら、新規セッション
         connInfo.SessionInfo = NewSessionInfo()
         sessionId = connInfo.SessionInfo.SessionId
         newSession = true
@@ -262,14 +311,7 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
         sessionId, connInfo.SessionInfo.ReadNo, resp.WriteNo,
         connInfo.SessionInfo.WriteNo, resp.ReadNo )
 
-    if resp.Response != generateChallengeResponse( challenge.Challenge, param.pass ) {
-        bytes, _ := json.Marshal( AuthResult{ "ng", 0, 0, 0 } )
-        if err := WriteItem( stream, bytes, connInfo.CryptCtrlObj ); err != nil {
-            return false, err
-        }
-        log.Print( "mismatch password" )
-        return false, fmt.Errorf("mismatch password" )
-    }
+    // AuthResult を返す
     bytes, _ = json.Marshal(
         AuthResult{
             "ok", sessionId,
@@ -279,18 +321,27 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
     }
     log.Print( "match password" )
 
-    param.sessionId = sessionId
-
+    // データ再送のための設定
     connInfo.SessionInfo.SetReWrite( resp.ReadNo )
     
     SetSessionConn( connInfo )
     if !newSession {
+        // 新規セッションでない場合、既にセッションが処理中なので、
+        // そのセッションでコネクションが close されるのを待つ
         JoinUntilToCloseConn( stream )
     }
     
     return newSession, nil
 }
 
+
+// サーバとのネゴシエーションを行なう
+//
+// クライアントの認証に必要や手続と、再接続時のセッション情報などをやり取りする
+//
+// @param connInfo コネクション。再接続時はセッション情報をセットしておく。
+// @param param TunnelParam
+// @return error
 func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
 
     log.Print( "start auth" )
@@ -301,7 +352,10 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
         // proxy 経由の websocket だと、
         // 最初のデータが正常に送信されないことがある。
         // ここで、最初のデータにどれだけズレがあるかを確認する。
-        
+
+        // 0x00 〜 0x09 までのバイト列が 2 回あるので、
+        // 最初に 10 バイト読み込み、
+        // 読み込めた値を見てズレを確認する
         buf := make( []byte, 10 )
         if _, err := io.ReadFull( stream, buf ); err != nil {
             return err
@@ -312,6 +366,8 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
         if offset >= 10 {
             return fmt.Errorf( "illegal num -- %d", offset )
         }
+
+        // ズレ量に応じて残りのデータを読み込む
         if _, err := io.ReadFull( stream, buf[ :10-offset] ); err != nil {
             return err
         }
@@ -333,7 +389,8 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
     if !bytes.Equal( hello, []byte(MAGIC) ) {
         return fmt.Errorf( "unmatch MAGIC %x", hello )
     }
-    
+
+    // challenge を読み込み、認証用パスワードから response を生成する
     reader, err = ReadItem( stream, connInfo.CryptCtrlObj )
     log.Print( "read challenge" )
     if err != nil {
@@ -344,6 +401,7 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
         return err
     }
     log.Print( "challenge ", challenge.Challenge )
+    // サーバ側のモードを確認して、不整合がないかチェックする
     switch challenge.Mode {
     case "server":
         if param.Mode != "client" {
@@ -363,16 +421,18 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
         }
     }
 
+    // response を生成
     resp := generateChallengeResponse( challenge.Challenge, param.pass )
     bytes, _ := json.Marshal(
         AuthResponse{
-            resp, param.sessionId,
+            resp, connInfo.SessionInfo.SessionId,
             connInfo.SessionInfo.WriteNo, connInfo.SessionInfo.ReadNo } )
     if err := WriteItem( stream, bytes, connInfo.CryptCtrlObj ); err != nil {
         return err
     }
 
     {
+        // AuthResult を取得する
         log.Print( "read auth result" )
         reader, err := ReadItem( stream, connInfo.CryptCtrlObj )
         if err != nil {
@@ -386,7 +446,16 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
             return fmt.Errorf( "failed to auth -- %s", result.Result )
         }
 
-        param.sessionId = result.SessionId
+        if result.SessionId != connInfo.SessionInfo.SessionId {
+            if connInfo.SessionInfo.SessionId == 0 {
+                // 新規接続だった場合、セッション情報を更新する
+                connInfo.SessionInfo.SessionId = result.SessionId
+            } else {
+                return fmt.Errorf(
+                    "illegal sessionId -- %d, %d",
+                    connInfo.SessionInfo.SessionId, result.SessionId )
+            }
+        }
 
         log.Printf(
             "sessionId: %d, ReadNo: %d(%d), WriteNo: %d(%d)",

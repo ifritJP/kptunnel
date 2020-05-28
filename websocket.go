@@ -31,10 +31,15 @@ func StartWebsocketEchoServer() {
 
 
 type proxyInfo struct {
+    // UA の文字列
     userAgent string
+    // proxy サーバの URL
     url *url.URL
+    // 接続用の dialer
     dialer proxy.Dialer
 }
+
+// proxy 経由で addr に接続する
 func (info *proxyInfo) Dial(network, addr string) (net.Conn, error) {
     log.Print( info.url.Host )
     conn, err := info.dialer.Dial( "tcp", info.url.Host )
@@ -89,6 +94,7 @@ func (info *proxyInfo) Dial(network, addr string) (net.Conn, error) {
     return conn, nil
 }
 
+// websocketUrl で示すサーバに websocket で接続する
 func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param *TunnelParam, sessionInfo *SessionInfo ) (*ConnInfo, error) {
     // websocketUrl := "ws://localhost:12345/echo"
     // proxyHost := "http://localhost:10080"

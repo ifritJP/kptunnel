@@ -3,34 +3,94 @@ package main
 import "flag"
 import "fmt"
 import "regexp"
+import "os"
+import "strings"
+import "strconv"
+import "net/url"
 
 // 2byte の MAX。
 // ここを大きくする場合は、WriteItem, ReadItem の処理を変更する。
 const BUFSIZE=65535
 
+func hostname2HostInfo( name string ) *HostInfo {
+    if strings.Index( name, "://" ) == -1 {
+        name = fmt.Sprintf( "http://%s", name )
+    }
+    serverUrl, err := url.Parse( name )
+    if err != nil {
+        fmt.Printf( "%s\n", err )
+        return nil
+    }
+    hostport := strings.Split( serverUrl.Host, ":" )
+    if len( hostport ) != 2 {
+        fmt.Printf( "illegal pattern. set 'hoge.com:1234'\n" )
+        return nil
+    }
+    var port int
+    port, err2 := strconv.Atoi( hostport[1] )
+    if err2 != nil {
+        fmt.Printf( "%s\n", err2 )
+        return nil
+    }
+    return &HostInfo{ "", hostport[ 0 ], port, serverUrl.Path }
+}
+
 func main() {
 
-    mode := flag.String( "mode", "server", "<server|client>" )
-    server := flag.String( "server", "localhost", "server" )
-    tunnelPort := flag.Int( "port", 8000, "tunnel port" )
-    pass := flag.String( "pass", "hogehoge", "password" )
-    encPass := flag.String( "encPass", "hogehoge", "packet encrypt pass" )
-    encCount := flag.Int( "encCount", 1000,
+    var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+    mode := cmd.String( "mode", "",
+        "<server|r-server|wsserver|r-wsserver|client|r-client|wsclient|r-wsclient>" )
+    server := cmd.String( "server", "", "server (hoge.com:1234 or :1234)" )
+    remote := cmd.String( "remote", "", "remote host (hoge.com:1234)" )
+    pass := cmd.String( "pass", "hogehoge", "password" )
+    encPass := cmd.String( "encPass", "hogehoge", "packet encrypt pass" )
+    encCount := cmd.Int( "encCount", 1000,
         `number to encrypt the tunnel packet.
  -1: infinity
   0: plain
   N: packet count` )
-    ipPattern := flag.String( "ip", "", "allow ip pattern" )
-    proxyHost := flag.String( "proxy", "", "proxy server" )
-    userAgent := flag.String( "UA", "", "user agent for websocket" )
-    flag.Parse()
+    ipPattern := cmd.String( "ip", "", "allow ip pattern" )
+    proxyHost := cmd.String( "proxy", "", "proxy server" )
+    userAgent := cmd.String( "UA", "Go Http Client", "user agent for websocket" )
+    sessionPort := cmd.Int( "port", 0, "session port" )
 
-    sessionPort := 8001
+    usage := func() {
+        fmt.Fprintf(cmd.Output(), "\nUsage: %s [options]\n\n", os.Args[0])
+        fmt.Fprintf(cmd.Output(), " options:\n" )
+        cmd.PrintDefaults()
+        os.Exit( 1 )
+    }
+    cmd.Usage = usage
+
+    cmd.Parse( os.Args[1:] )
+
+
+    var remoteInfo *HostInfo
+    if *remote != "" {
+        remoteInfo = hostname2HostInfo( *remote )
+    }
+    
+    serverInfo := hostname2HostInfo( *server )
+    if serverInfo == nil {
+        fmt.Print( "set -server option!\n" )
+        usage()
+    }
+
+    if *mode == "r-server" || *mode == "r-wsserver" ||
+        *mode == "client" || *mode == "wsclient" {
+        if *sessionPort == 0 {
+            fmt.Print( "set -port option!\n" )
+            usage()
+        }
+        if remoteInfo == nil {
+            fmt.Print( "set -remote option!\n" )
+            usage()
+        }
+    }
+    
+    
     echoPort := 8002
-    dstPort := 22
-    hostInfo := HostInfo{ "", "localhost", dstPort, "" }
-    serverInfo := HostInfo{ "http://", *server, *tunnelPort, "" }
-    websocketServerInfo := HostInfo{ "ws://", *server, *tunnelPort, "/" }
+    websocketServerInfo := HostInfo{ "ws://", serverInfo.Name, serverInfo.Port, "/" }
     var pattern *regexp.Regexp
     if *ipPattern != "" {
         pattern = regexp.MustCompile( *ipPattern )
@@ -39,23 +99,23 @@ func main() {
         pass = nil
     }
 
-    param := &TunnelParam{ pass, *mode, pattern, 0, encPass, *encCount }
+    param := &TunnelParam{ pass, *mode, pattern, encPass, *encCount }
 
     switch *mode {
     case "server":
-        StartServer( param, *tunnelPort )
+        StartServer( param, serverInfo.Port )
     case "r-server":
-        StartReverseServer( param, *tunnelPort, sessionPort, hostInfo )
+        StartReverseServer( param, serverInfo.Port, *sessionPort, *remoteInfo )
     case "wsserver":
-        StartWebsocketServer( param, *tunnelPort )
+        StartWebsocketServer( param, serverInfo.Port )
     case "r-wsserver":
-        StartReverseWebSocketServer( param, *tunnelPort, sessionPort, hostInfo )
+        StartReverseWebSocketServer( param, serverInfo.Port, *sessionPort, *remoteInfo )
     case "client":
-        StartClient( param, serverInfo, sessionPort, hostInfo )
+        StartClient( param, *serverInfo, *sessionPort, *remoteInfo )
     case "r-client":
-        StartReverseClient( param, serverInfo )
+        StartReverseClient( param, *serverInfo )
     case "wsclient":
-        StartWebSocketClient( *userAgent, param, websocketServerInfo, *proxyHost, sessionPort, hostInfo )
+        StartWebSocketClient( *userAgent, param, websocketServerInfo, *proxyHost, *sessionPort, *remoteInfo )
     case "r-wsclient":
         StartReverseWebSocketClient( *userAgent, param, websocketServerInfo, *proxyHost )
     case "echo":
