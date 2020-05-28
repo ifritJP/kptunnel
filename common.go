@@ -16,24 +16,37 @@ import (
 	"crypto/cipher"
 )
 
+// 接続先情報
 type HostInfo struct {
+    // スキーム。 http:// など
     Scheme string
+    // ホスト名
     Name string
+    // ポート番号
     Port int
+    // パス
     Path string
 }
 
+// 接続先の文字列表現
 func (info *HostInfo) toStr() string {
     return fmt.Sprintf( "%s%s:%d%s", info.Scheme, info.Name, info.Port, info.Path )
 }
 
+// パスワードからキーを生成する
 func getKey(pass []byte) []byte {
     sum := sha256.Sum256(pass)
     return sum[:]
 }
 
+// 暗号化モード
 type CryptMode struct {
+    // 暗号化を行なう最大回数。
+    // -1: 無制限
+    //  0: 暗号化なし
+    //  N: 残り N 回
     countMax int
+    // 
     count int
     work []byte
     stream cipher.Stream
@@ -270,7 +283,7 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
 
     connInfo.SessionInfo.SetReWrite( resp.ReadNo )
     
-    SetSessionConn( sessionId, connInfo )
+    SetSessionConn( connInfo )
     if !newSession {
         JoinUntilToCloseConn( stream )
     }
