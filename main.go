@@ -97,7 +97,11 @@ func main() {
             usage()
         }
     }
-    
+
+    if *interval < 2 {
+        log.Print( "'interval' is less than 2. force set 2." )
+        *interval = 2
+    }
     
     echoPort := 8002
     websocketServerInfo := HostInfo{ "ws://", serverInfo.Name, serverInfo.Port, "/" }
