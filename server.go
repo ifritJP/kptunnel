@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
     "fmt"
+    "time"
     "net/http"
     "golang.org/x/net/websocket"
 )
@@ -51,6 +52,7 @@ func StartServer(param *TunnelParam, port int) {
         newSession := false
         if newSession, err = ProcessServerAuth( connInfo, &tunnelParam, fmt.Sprintf( "%s", conn.RemoteAddr() ) ); err != nil {
             log.Print( "auth error: ", err );
+            time.Sleep( time.Second )
             conn.Close()
         } else {
             if newSession {
@@ -82,6 +84,7 @@ func StartReverseServer( param *TunnelParam, tunnelPort int, connectPort int, ho
         newSession := false
         if newSession, err = ProcessServerAuth( connInfo, &tunnelParam, fmt.Sprintf( "%s", conn.RemoteAddr() ) ); err != nil {
             log.Print( "auth error: ", err );
+            time.Sleep( time.Second )
         } else {
             if newSession {
                 ListenNewConnect( connInfo, connectPort, hostInfo, param, GetSessionConn )
@@ -127,6 +130,7 @@ func StartWebsocketServer( param *TunnelParam, tunnelPort int ) {
         
         if newSession, err := ProcessServerAuth( connInfo, &tunnelParam, remoteAddr ); err != nil {
             log.Print( "auth error: ", err );
+            time.Sleep( time.Second )
             return
         } else {
             if newSession {
@@ -146,6 +150,7 @@ func StartReverseWebSocketServer( param *TunnelParam, tunnelPort int, connectPor
         
         if newSession, err := ProcessServerAuth( connInfo, &tunnelParam, remoteAddr ); err != nil {
             log.Print( "auth error: ", err );
+            time.Sleep( time.Second )
             return
         } else {
             if newSession {
