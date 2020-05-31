@@ -3,7 +3,7 @@ package main
 import (
     "container/list"
 	"container/ring"
-    "encoding/binary"
+    //"encoding/binary"
 	"io"
 	"log"
 	"fmt"
@@ -30,6 +30,10 @@ type TunnelParam struct {
     //  0: 暗号化しない
     //  N: 残り N 回の通信を暗号化する
     encCount int
+    // 無通信を避けるための接続確認の間隔 (ミリ秒)
+    keepAliveInterval int
+    // magic
+    magic []byte
 }
 
 // セッションの再接続時に、
@@ -55,6 +59,11 @@ type SessionInfo struct {
     // 送り直すパケット番号。
     // -1 の場合は送り直しは無し。
     ReWriteNo int64
+
+    // pipe から読み取ったサイズ
+    readSize int64
+    // pipe に書き込んだサイズ
+    wroteSize int64
 }
 
 func (sessionInfo *SessionInfo) Setup() {
@@ -67,7 +76,7 @@ func (sessionInfo *SessionInfo) Setup() {
 
 func NewEmptySessionInfo( sessionId int ) *SessionInfo {
     sessionInfo := &SessionInfo{
-        sessionId, 0, 0, new( list.List ), ring.New( PACKET_NUM ), -1 }
+        sessionId, 0, 0, new( list.List ), ring.New( PACKET_NUM ), -1, 0, 0 }
 
     sessionInfo.Setup()
     return sessionInfo
@@ -209,10 +218,6 @@ type pipeInfo struct {
     connecting bool
     // pipe を繋ぐコネクション情報 
     connInfo *ConnInfo
-    // pipe から読み取ったサイズ
-    readSize int64
-    // pipe に書き込んだサイズ
-    wroteSize int64
 }
 
 // セッションで書き込んだデータを保持する
@@ -223,6 +228,7 @@ type SessionPacket struct {
     bytes []byte
 }
 
+
 // コネクションへのデータ書き込み
 //
 // ここで、書き込んだデータを WritePackList に保持する。
@@ -230,7 +236,7 @@ type SessionPacket struct {
 // @param info コネクション
 // @param bytes 書き込みデータ
 // @return error 失敗した場合 error
-func (tunnel *pipeInfo) writeData( info *ConnInfo, bytes []byte) error {
+func (info *ConnInfo) writeData( bytes []byte ) error {
     if err := WriteItem( info.Conn, bytes, info.CryptCtrlObj ); err != nil {
         return err
     }
@@ -240,7 +246,7 @@ func (tunnel *pipeInfo) writeData( info *ConnInfo, bytes []byte) error {
         list.Remove( list.Front() )
     }
     info.SessionInfo.WriteNo++
-    tunnel.wroteSize += int64(len( bytes ))
+    info.SessionInfo.wroteSize += int64(len( bytes ))
     return nil
 }
 
@@ -249,32 +255,23 @@ func (tunnel *pipeInfo) writeData( info *ConnInfo, bytes []byte) error {
 // @param info コネクション
 // @param bytes 書き込みデータ
 // @return error 失敗した場合 error
-func (tunnel *pipeInfo) readData( info *ConnInfo, bytes []byte ) ([]byte, error) {
-    // データサイズ読み込み
-    buf := make([]byte,2)
-    if _, err := io.ReadFull( info.Conn, buf ); err != nil {
-        return nil, err
-    }
-    dataSize := int(binary.BigEndian.Uint16( buf ))
-    if dataSize > len( bytes ) {
-        return nil, fmt.Errorf("Error: dataSize is illegal -- %d", dataSize )
-    }
-    // データ読み込み
-    workBuf := bytes[ : dataSize ]
-    if size, err := io.ReadFull( info.Conn, workBuf); err != nil {
-        return nil, err
-    } else {
-        if len( workBuf ) != size {
-            workBuf = workBuf[:size]
+func (info *ConnInfo) readData( bytes []byte ) ([]byte, error) {
+    var resultBuf []byte
+    for {
+        decBuf, kind, err := ReadItem( info.Conn, info.CryptCtrlObj, bytes )
+        if err != nil {
+            return nil, err
         }
+        if kind == PACKET_KIND_NORMAL {
+            resultBuf = decBuf
+            break
+        }
+        // kind が PACKET_KIND_NORMAL でない場合は読み飛す
+        log.Print( "skip kind -- ", kind )
     }
-    if info.CryptCtrlObj == nil {
-        return workBuf, nil
-    } 
-    decBuf := info.CryptCtrlObj.Decrypt( workBuf )
-    tunnel.readSize += int64(len( workBuf ))
+    info.SessionInfo.readSize += int64(len( resultBuf ))
     info.SessionInfo.ReadNo++
-    return decBuf, nil
+    return resultBuf, nil
 }
 
 // 再接続を行なう
@@ -397,7 +394,7 @@ func tunnel2Stream( info *pipeInfo, dst io.Writer ) {
         var readBuf []byte
         for {
             var readerr error
-            readBuf, readerr = info.readData( connInfo, buf )
+            readBuf, readerr = connInfo.readData( buf )
             if readerr != nil {
                 log.Printf(
                     "tunnel read err log: readNo=%d, err=%s",
@@ -480,9 +477,9 @@ func rewirte2Tunnel( info *pipeInfo, connInfo *ConnInfo, rev int ) bool {
 //
 // @param src 送信元
 // @param info pipe 情報
-func stream2Tunnel( src io.Reader, info *pipeInfo ) {
+func stream2Tunnel( src io.Reader, info *pipeInfo, packChan chan PackInfo) {
 
-    rev, connInfo := info.getConn()
+    _, connInfo := info.getConn()
     sessionInfo := connInfo.SessionInfo
 
     end := false
@@ -496,20 +493,52 @@ func stream2Tunnel( src io.Reader, info *pipeInfo ) {
         if readerr != nil {
             log.Printf( "read err log: writeNo=%d, err=%s", sessionInfo.WriteNo, readerr )
             // 入力元が切れたら、転送先に 0 バイトデータを書き込む
-            info.writeData( connInfo, make([]byte,0))
+            packChan <- PackInfo{ make([]byte,0), PACKET_KIND_NORMAL }
             break
         }
         if readSize == 0 {
             log.Print( "ignore 0 size packet." )
             continue
         }
-        readBuf := buf[:readSize]
+        packChan <- PackInfo{ buf[:readSize], PACKET_KIND_NORMAL }
+    }
+    info.fin <- true
+}
+
+type PackInfo struct {
+    bytes []byte
+    kind int8
+}
+
+func packetWriter( info *pipeInfo, packChan chan PackInfo ) {
+
+    rev, connInfo := info.getConn()
+    sessionInfo := connInfo.SessionInfo
+
+    for {
+        packet := <-packChan
+
         for {
-            writeerr := info.writeData( connInfo, readBuf )
+            var writeerr error
+            
+            switch packet.kind {
+            case PACKET_KIND_EOS:
+                log.Printf( "eos -- sessionId %d", sessionInfo.SessionId )
+                info.fin <- true
+                return
+            case PACKET_KIND_NORMAL:
+                writeerr = connInfo.writeData( packet.bytes )
+            case PACKET_KIND_DUMMY:
+                writeerr = WriteDummy( connInfo.Conn )
+            default:
+                log.Fatal( "illegal kind -- ", packet.kind )
+            }
+
             if writeerr != nil {
                 log.Printf(
                     "tunnel write err log: writeNo=%d, err=%s",
                     sessionInfo.WriteNo, writeerr )
+                end := false
                 connInfo, rev, end = info.reconnect( "write", rev )
                 if end {
                     break
@@ -523,29 +552,56 @@ func stream2Tunnel( src io.Reader, info *pipeInfo ) {
             log.Print( "retry to write -- ", sessionInfo.WriteNo )
         }
     }
-    info.fin <- true
 }
 
+// 無通信を避けるため keep alive 用通信を行なう間隔 (ミリ秒)
+const KEEP_ALIVE_INTERVAL = 20 * 1000
+// keep alive の時間経過を確認する間隔 (ミリ秒)。
+// これが長いと、 relaySession の後処理の待ち時間がかかる。
+// 短いと、負荷がかかる。
+const SLEEP_INTERVAL = 1000
 
 // tunnel で トンネリングされている中で、 local と tunnel の通信を中継する
 //
 // @param connInfo Tunnel のコネクション情報
 // @param local Tunnel との接続先
 // @param reconnect 再接続関数
-func relaySession( connInfo *ConnInfo, local io.ReadWriteCloser, reconnect func( sessionInfo *SessionInfo ) *ConnInfo ) {
+func relaySession( connInfo *ConnInfo, local io.ReadWriteCloser, interval int, reconnect func( sessionInfo *SessionInfo ) *ConnInfo ) {
     info := pipeInfo{
-        0, reconnect, new( sync.Mutex ),
-        false, make(chan bool), false, connInfo, 0, 0 }
+        0, reconnect, new( sync.Mutex ), false, make(chan bool), false, connInfo }
 
-    go stream2Tunnel( local, &info )
+    packChan := make(chan PackInfo)
+
+    go packetWriter( &info, packChan )
+    go stream2Tunnel( local, &info, packChan )
     go tunnel2Stream( &info, local )
 
+    keepaliveEnd := make(chan bool)
+    keepalive := func() {
+        // 一定時間の無通信で切断されないように、 20 秒に一回
+        for !info.end {
+            for sleepTime := 0; sleepTime < interval; sleepTime += SLEEP_INTERVAL {
+                time.Sleep( SLEEP_INTERVAL * time.Millisecond )
+                if info.end {
+                    break
+                }
+            }
+            packChan <- PackInfo { nil, PACKET_KIND_DUMMY }
+        }
+        log.Printf( "end keepalive -- %d", connInfo.SessionInfo.SessionId )
+        keepaliveEnd <- true
+    }
+    go keepalive()
 
     <-info.fin
     local.Close()
-    // tunnel.Close()
     <-info.fin
-    log.Printf( "close Session: read %d, write %d", info.readSize, info.wroteSize )
+    <-keepaliveEnd
+    packChan <- PackInfo { nil, PACKET_KIND_EOS }
+    <-info.fin
+    log.Printf(
+        "close Session: read %d, write %d",
+        connInfo.SessionInfo.readSize, connInfo.SessionInfo.wroteSize )
 }
 
 // 再接続をリトライする関数を返す
@@ -605,7 +661,7 @@ func ListenNewConnect( connInfo *ConnInfo, port int, hostInfo HostInfo, param *T
         log.Print("connected")
         
         WriteHeader( connInfo.Conn, hostInfo, connInfo.CryptCtrlObj )
-        relaySession( connInfo, src, reconnect )
+        relaySession( connInfo, src, param.keepAliveInterval, reconnect )
 
         log.Print("disconnected")
     }
@@ -629,7 +685,7 @@ func NewConnectFromWith( connInfo *ConnInfo, param *TunnelParam, reconnect func(
     defer dst.Close()
 
     log.Print( "connected to ", dstAddr )
-    relaySession( connInfo, dst, reconnect )
+    relaySession( connInfo, dst, param.keepAliveInterval, reconnect )
 
     log.Print( "closed" )
 }

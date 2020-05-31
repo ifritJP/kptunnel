@@ -42,8 +42,8 @@ func main() {
         "<server|r-server|wsserver|r-wsserver|client|r-client|wsclient|r-wsclient>" )
     server := cmd.String( "server", "", "server (hoge.com:1234 or :1234)" )
     remote := cmd.String( "remote", "", "remote host (hoge.com:1234)" )
-    pass := cmd.String( "pass", "hogehoge", "password" )
-    encPass := cmd.String( "encPass", "hogehoge", "packet encrypt pass" )
+    pass := cmd.String( "pass", "", "password" )
+    encPass := cmd.String( "encPass", "", "packet encrypt pass" )
     encCount := cmd.Int( "encCount", 1000,
         `number to encrypt the tunnel packet.
  -1: infinity
@@ -53,6 +53,7 @@ func main() {
     proxyHost := cmd.String( "proxy", "", "proxy server" )
     userAgent := cmd.String( "UA", "Go Http Client", "user agent for websocket" )
     sessionPort := cmd.Int( "port", 0, "session port" )
+    interval := cmd.Int( "int", 20, "keep alive interval" )
 
     usage := func() {
         fmt.Fprintf(cmd.Output(), "\nUsage: %s [options]\n\n", os.Args[0])
@@ -65,6 +66,15 @@ func main() {
     cmd.Parse( os.Args[1:] )
 
 
+    if *pass == "" {
+        fmt.Print( "warning: password is default. set -pass option.\n" )
+    }
+    if *encPass == "" {
+        fmt.Print( "warning: encrypt password is default. set -encPass option.\n" )
+    }
+    magic := []byte( *pass + *encPass )
+
+    
     var remoteInfo *HostInfo
     if *remote != "" {
         remoteInfo = hostname2HostInfo( *remote )
@@ -95,11 +105,8 @@ func main() {
     if *ipPattern != "" {
         pattern = regexp.MustCompile( *ipPattern )
     }
-    if *pass == "" {
-        pass = nil
-    }
-
-    param := &TunnelParam{ pass, *mode, pattern, encPass, *encCount }
+    param := &TunnelParam{
+        pass, *mode, pattern, encPass, *encCount,*interval * 1000, getKey( magic ) } 
 
     switch *mode {
     case "server":

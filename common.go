@@ -121,18 +121,35 @@ func (ctrl *CryptCtrl) Decrypt( bytes []byte ) []byte {
     return ctrl.dec.Process( bytes )
 }       
 
+const PACKET_KIND_NORMAL = 0
+const PACKET_KIND_DUMMY = 1
+const PACKET_KIND_EOS = 2
+
+var dummyKindBuf = []byte{ PACKET_KIND_DUMMY }
+var normalKindBuf = []byte{ PACKET_KIND_NORMAL }
+
+func WriteDummy( ostream io.Writer ) error {
+    if _, err := ostream.Write( dummyKindBuf ); err != nil {
+        return err
+    }
+    return nil
+}
+
 // データを出力する
 //
 // ostream 出力先
 // bytes データ
 // ctrl 暗号化情報
 func WriteItem( ostream io.Writer, bytes []byte, ctrl *CryptCtrl ) error {
-    if ctrl != nil {
-        bytes = ctrl.enc.Process( bytes )
+    if _, err := ostream.Write( normalKindBuf ); err != nil {
+        return err
     }
     if err := binary.Write(
         ostream, binary.BigEndian, uint16( len( bytes ) ) ); err != nil {
         return err
+    }
+    if ctrl != nil {
+        bytes = ctrl.enc.Process( bytes )
     }
     _, err := ostream.Write( bytes )
     return err
@@ -145,29 +162,71 @@ func WriteHeader( con io.Writer, hostInfo HostInfo, ctrl *CryptCtrl ) error {
 }
 
 // データを読み込む
-func ReadItem( istream io.Reader, ctrl *CryptCtrl ) (io.Reader,error) {
-    buf := make([]byte,2)
-    _, error := io.ReadFull( istream, buf )
+func ReadItem( istream io.Reader, ctrl *CryptCtrl, workBuf []byte ) ([]byte,int8,error) {
+    kindbuf := make([]byte,1)
+    _, error := io.ReadFull( istream, kindbuf )
     if error != nil {
-        return nil, error
+        return nil, PACKET_KIND_NORMAL, error
     }
-    headerSize := binary.BigEndian.Uint16( buf )
-    headerBuf := make([]byte,headerSize)
-    _, error = io.ReadFull( istream, headerBuf)
-    if error != nil {
-        return nil, error
+    switch kindbuf[ 0 ] {
+    case PACKET_KIND_DUMMY:
+        return nil, PACKET_KIND_DUMMY, nil
+    case PACKET_KIND_NORMAL:
+        buf := make([]byte,2)
+        _, error := io.ReadFull( istream, buf )
+        if error != nil {
+            return nil, PACKET_KIND_NORMAL, error
+        }
+        packSize := binary.BigEndian.Uint16( buf )
+        var packBuf []byte
+        if workBuf == nil {
+            packBuf = make([]byte,packSize)
+        } else {
+            if len( workBuf ) < int( packSize ) {
+                log.Fatal( "workbuf size is short -- ", len( workBuf ) )
+            }
+            packBuf = workBuf[:packSize]
+        }
+        _, error = io.ReadFull( istream, packBuf)
+        if error != nil {
+            return nil, PACKET_KIND_NORMAL, error
+        }
+        if ctrl != nil {
+            packBuf = ctrl.dec.Process( packBuf )
+        }
+        return packBuf, PACKET_KIND_NORMAL, nil
+    default:
+        return nil, PACKET_KIND_NORMAL, fmt.Errorf( "illegal kind" )
     }
-    if ctrl != nil {
-        headerBuf = ctrl.dec.Process( headerBuf )
+}
+
+// データを読み込む
+func readItemForNormal( istream io.Reader, ctrl *CryptCtrl ) ([]byte,error) {
+    buf, kind, err := ReadItem( istream, ctrl, nil )
+    if err != nil {
+        return nil, err
     }
-    return bytes.NewReader( headerBuf ), nil
+    if kind != PACKET_KIND_NORMAL {
+        return nil, fmt.Errorf( "illegal kind -- %d", kind )
+    }
+    return buf, nil
+}
+
+
+// データを読み込む
+func readItemWithReader( istream io.Reader, ctrl *CryptCtrl ) (io.Reader,error) {
+    buf, err := readItemForNormal( istream, ctrl )
+    if err != nil {
+        return nil, err
+    }
+    return bytes.NewReader( buf ), nil
 }
 
 // ヘッダを読み取る
 func ReadHeader( con io.Reader, ctrl *CryptCtrl ) (*HostInfo, error) {
     hostInfo := &HostInfo{}
 
-    reader, err := ReadItem( con, ctrl )
+    reader, err := readItemWithReader( con, ctrl )
     if err != nil {
         return hostInfo, err
     }
@@ -208,9 +267,6 @@ func generateChallengeResponse( challenge string, pass *string ) string {
     sum := sha256.Sum256([]byte( challenge + *pass ))
 	return base64.StdEncoding.EncodeToString( sum[:] )
 }
-
-const MAGIC = "hello"
-
 
 // サーバ側のネゴシエーション処理
 //
@@ -259,7 +315,7 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
 
     // 共通文字列を暗号化して送信することで、
     // 接続先の暗号パスワードが一致しているかチェック出来るようにデータ送信
-    WriteItem( stream, []byte(MAGIC), connInfo.CryptCtrlObj )
+    WriteItem( stream, []byte(param.magic), connInfo.CryptCtrlObj )
 
     // challenge 文字列生成
     nano := time.Now().UnixNano()
@@ -274,7 +330,7 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
     log.Print( "challenge ", challenge.Challenge )
 
     // challenge-response 処理
-    reader, err := ReadItem( stream, connInfo.CryptCtrlObj )
+    reader, err := readItemWithReader( stream, connInfo.CryptCtrlObj )
     if err != nil {
         return false, err
     }
@@ -380,18 +436,17 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
         }
     }
     
-    reader, err := ReadItem( stream, connInfo.CryptCtrlObj )
+    magicBuf, err := readItemForNormal( stream, connInfo.CryptCtrlObj )
     if err != nil {
         return err
     }
-    hello := make( []byte, len( MAGIC ) )
-    reader.Read( hello )
-    if !bytes.Equal( hello, []byte(MAGIC) ) {
-        return fmt.Errorf( "unmatch MAGIC %x", hello )
+    if !bytes.Equal( magicBuf, []byte(param.magic) ) {
+        return fmt.Errorf( "unmatch MAGIC %x", magicBuf )
     }
 
     // challenge を読み込み、認証用パスワードから response を生成する
-    reader, err = ReadItem( stream, connInfo.CryptCtrlObj )
+    var reader io.Reader
+    reader, err = readItemWithReader( stream, connInfo.CryptCtrlObj )
     log.Print( "read challenge" )
     if err != nil {
         return err
@@ -434,7 +489,7 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
     {
         // AuthResult を取得する
         log.Print( "read auth result" )
-        reader, err := ReadItem( stream, connInfo.CryptCtrlObj )
+        reader, err := readItemWithReader( stream, connInfo.CryptCtrlObj )
         if err != nil {
             return err
         }
