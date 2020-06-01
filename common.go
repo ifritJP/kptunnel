@@ -138,20 +138,27 @@ func WriteDummy( ostream io.Writer ) error {
 // データを出力する
 //
 // ostream 出力先
-// bytes データ
+// buf データ
 // ctrl 暗号化情報
-func WriteItem( ostream io.Writer, bytes []byte, ctrl *CryptCtrl ) error {
+func WriteItem( ostream io.Writer, buf []byte, ctrl *CryptCtrl ) error {
+    // bakStream := ostream
+    // var buffer bytes.Buffer
+    // buffer.Grow( len(normalKindBuf)+2+len(buf))
+    // ostream = &buffer
+
     if _, err := ostream.Write( normalKindBuf ); err != nil {
         return err
     }
     if err := binary.Write(
-        ostream, binary.BigEndian, uint16( len( bytes ) ) ); err != nil {
+        ostream, binary.BigEndian, uint16( len( buf ) ) ); err != nil {
         return err
     }
     if ctrl != nil {
-        bytes = ctrl.enc.Process( bytes )
+        buf = ctrl.enc.Process( buf )
     }
-    _, err := ostream.Write( bytes )
+    _, err := ostream.Write( buf )
+
+    // _, err = buffer.WriteTo( bakStream )
     return err
 }
 
@@ -382,8 +389,12 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
         // ベンチマーク
         benchBuf := make( []byte, 100 )
         for count := 0; count < BENCH_LOOP_COUNT; count++ {
-            ReadItem( stream, connInfo.CryptCtrlObj, benchBuf )
-            WriteItem( stream, benchBuf, connInfo.CryptCtrlObj )
+            if _, _, err := ReadItem( stream, connInfo.CryptCtrlObj, benchBuf ); err != nil {
+                return false, err
+            }
+            if err := WriteItem( stream, benchBuf, connInfo.CryptCtrlObj ); err != nil {
+                return false, err
+            }
         }
         return false, fmt.Errorf( "benchmarck" )
     }
@@ -516,8 +527,12 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
             benchBuf := make( []byte, 100 )
             prev := time.Now()
             for count := 0; count < BENCH_LOOP_COUNT; count++ {
-                WriteItem( stream, benchBuf, connInfo.CryptCtrlObj )
-                ReadItem( stream, connInfo.CryptCtrlObj, benchBuf )
+                if err := WriteItem( stream, benchBuf, connInfo.CryptCtrlObj ); err != nil {
+                    return err
+                }
+                if _,_,err := ReadItem( stream, connInfo.CryptCtrlObj, benchBuf ); err != nil  {
+                    return err
+                }
             }
             duration := time.Now().Sub( prev )
                         
