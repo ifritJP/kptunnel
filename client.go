@@ -67,10 +67,10 @@ func StartWebSocketClient( userAgent string, param *TunnelParam, serverInfo Host
         sessionParam := *param
         connInfo, err := ConnectWebScoket( serverInfo.toStr(), proxyHost, userAgent, &sessionParam, nil )
         if err != nil {
-            break
+            return
         }
         defer connInfo.Conn.Close()
-    
+        
         reconnect := CreateToReconnectFunc(
             func( sessionInfo *SessionInfo ) (*ConnInfo, error) {
                 return ConnectWebScoket(

@@ -8,6 +8,7 @@ import "strings"
 import "strconv"
 import "net/url"
 
+
 // 2byte の MAX。
 // ここを大きくする場合は、WriteItem, ReadItem の処理を変更する。
 const BUFSIZE=65535
@@ -54,6 +55,7 @@ func main() {
     userAgent := cmd.String( "UA", "Go Http Client", "user agent for websocket" )
     sessionPort := cmd.Int( "port", 0, "session port" )
     interval := cmd.Int( "int", 20, "keep alive interval" )
+    ctrl := cmd.String( "ctrl", "", "[bench]" )
 
     usage := func() {
         fmt.Fprintf(cmd.Output(), "\nUsage: %s [options]\n\n", os.Args[0])
@@ -99,7 +101,7 @@ func main() {
     }
 
     if *interval < 2 {
-        log.Print( "'interval' is less than 2. force set 2." )
+        fmt.Print( "'interval' is less than 2. force set 2." )
         *interval = 2
     }
     
@@ -110,7 +112,10 @@ func main() {
         pattern = regexp.MustCompile( *ipPattern )
     }
     param := &TunnelParam{
-        pass, *mode, pattern, encPass, *encCount,*interval * 1000, getKey( magic ) } 
+        pass, *mode, pattern, encPass, *encCount,*interval * 1000, getKey( magic ), 0 }
+    if *ctrl == "bench" {
+        param.ctrl = CTRL_BENCH
+    }
 
     switch *mode {
     case "server":
@@ -132,9 +137,10 @@ func main() {
     case "echo":
         StartEchoServer( echoPort )
     case "test":
-        for index := 0; index < 2; index++ {
-            val := make([]byte,10)
-            fmt.Printf( "%p\n", val )
+        pattern = regexp.MustCompile( "[ ]*:[ 0-9]*$" )
+        if loc := pattern.FindStringIndex( "1.2.3.4: 123" ); loc != nil {
+            fmt.Print( loc, loc[0], loc[1], "1.2.3.4: 123"[:loc[0]] )
+            
         }
             
     }

@@ -34,6 +34,8 @@ type TunnelParam struct {
     keepAliveInterval int
     // magic
     magic []byte
+    //
+    ctrl int
 }
 
 // セッションの再接続時に、
@@ -267,7 +269,7 @@ func (info *ConnInfo) readData( bytes []byte ) ([]byte, error) {
             break
         }
         // kind が PACKET_KIND_NORMAL でない場合は読み飛す
-        log.Print( "skip kind -- ", kind )
+        // log.Print( "skip kind -- ", kind )
     }
     info.SessionInfo.readSize += int64(len( resultBuf ))
     info.SessionInfo.ReadNo++
@@ -656,7 +658,6 @@ func ListenNewConnect( connInfo *ConnInfo, port int, hostInfo HostInfo, param *T
         if err != nil {
             log.Fatal(err)
         }
-
         defer src.Close()
         log.Print("connected")
         

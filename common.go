@@ -244,6 +244,11 @@ type AuthChallenge struct {
     Mode string
 }
 
+const BENCH_LOOP_COUNT = 200
+
+const CTRL_NONE = 0
+const CTRL_BENCH = 1
+
 // client -> server
 type AuthResponse struct {
     // 
@@ -251,6 +256,7 @@ type AuthResponse struct {
     SessionId int
     WriteNo int64
     ReadNo int64
+    Ctrl int
 }
 
 // server -> client
@@ -275,19 +281,11 @@ func generateChallengeResponse( challenge string, pass *string ) string {
 // @param connInfo 接続コネクション情報
 // @param param Tunnel情報
 // @param remoteAddr 接続元のアドレス
-// @return bool ネゴシエーション成功した場合 true
+// @return bool 新しい session の場合 true
 // @return error
-func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr string ) (bool,error) {
+func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr string ) (bool, error) {
 
     stream := connInfo.Conn
-    if param.ipPattern != nil {
-        // 接続元のアドレスをチェックする
-        addr := fmt.Sprintf( "%v", remoteAddr )
-        if ! param.ipPattern.MatchString( addr ) {
-            return false, fmt.Errorf( "unmatch ip -- %s", addr )
-        }
-    }
-
     log.Print( "start auth" )
 
     {
@@ -379,6 +377,17 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
 
     // データ再送のための設定
     connInfo.SessionInfo.SetReWrite( resp.ReadNo )
+
+    if resp.Ctrl == CTRL_BENCH {
+        // ベンチマーク
+        benchBuf := make( []byte, 100 )
+        for count := 0; count < BENCH_LOOP_COUNT; count++ {
+            ReadItem( stream, connInfo.CryptCtrlObj, benchBuf )
+            WriteItem( stream, benchBuf, connInfo.CryptCtrlObj )
+        }
+        return false, fmt.Errorf( "benchmarck" )
+    }
+    
     
     SetSessionConn( connInfo )
     if !newSession {
@@ -481,7 +490,8 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
     bytes, _ := json.Marshal(
         AuthResponse{
             resp, connInfo.SessionInfo.SessionId,
-            connInfo.SessionInfo.WriteNo, connInfo.SessionInfo.ReadNo } )
+            connInfo.SessionInfo.WriteNo,
+            connInfo.SessionInfo.ReadNo, param.ctrl } )
     if err := WriteItem( stream, bytes, connInfo.CryptCtrlObj ); err != nil {
         return err
     }
@@ -500,6 +510,22 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
         if result.Result != "ok" {
             return fmt.Errorf( "failed to auth -- %s", result.Result )
         }
+
+        if param.ctrl == CTRL_BENCH {
+            // ベンチマーク
+            benchBuf := make( []byte, 100 )
+            prev := time.Now()
+            for count := 0; count < BENCH_LOOP_COUNT; count++ {
+                WriteItem( stream, benchBuf, connInfo.CryptCtrlObj )
+                ReadItem( stream, connInfo.CryptCtrlObj, benchBuf )
+            }
+            duration := time.Now().Sub( prev )
+                        
+            return fmt.Errorf( "benchmarck -- %s", duration )
+        }
+        
+
+        
 
         if result.SessionId != connInfo.SessionInfo.SessionId {
             if connInfo.SessionInfo.SessionId == 0 {

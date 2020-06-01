@@ -1,5 +1,8 @@
 build:
-	go build -o tunnel *.go
+	go build -o tunnel$(SUFFIX) *.go
+
+build-win:
+	GOARCH=386 GOOS=windows $(MAKE) build SUFFIX=.exe
 
 test:
 	$(MAKE) build && ./tunnel -mode server

@@ -31,6 +31,34 @@ func StartEchoServer(port int) {
 	}
 }
 
+func listenTcpServer( local net.Listener, param *TunnelParam, process func( connInfo *ConnInfo) ) {
+    conn, err := local.Accept()
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer conn.Close()
+    
+    remoteAddr := fmt.Sprintf( "%s", conn.RemoteAddr() )
+    log.Print("connected -- ", remoteAddr )
+    if err := AcceptClient( remoteAddr, param ); err != nil {
+        log.Printf( "unmatch ip -- %s", remoteAddr )
+        time.Sleep( 3 * time.Second )
+        return
+    }
+    defer ReleaseClient( remoteAddr )
+    
+    tunnelParam := *param
+    connInfo := CreateConnInfo( conn, tunnelParam.encPass, tunnelParam.encCount, nil )
+    newSession := false
+    if newSession, err = ProcessServerAuth( connInfo, &tunnelParam, fmt.Sprintf( "%s", conn.RemoteAddr() ) ); err != nil {
+        log.Print( "auth error: ", err );
+        time.Sleep( 3 * time.Second )
+    } else {
+        if newSession {
+            process( connInfo )
+        }
+    }
+}
 
 func StartServer(param *TunnelParam, port int) {
     log.Print( "wating --- ", port )
@@ -41,25 +69,10 @@ func StartServer(param *TunnelParam, port int) {
 	defer local.Close()
 
 	for {
-		conn, err := local.Accept()
-		if err != nil {
-			log.Fatal(err)
-		}
-        connInfo := CreateConnInfo( conn, param.encPass, param.encCount, nil )
-        
-        log.Print("connected -- ", conn.RemoteAddr() )
-        tunnelParam := *param
-        newSession := false
-        if newSession, err = ProcessServerAuth( connInfo, &tunnelParam, fmt.Sprintf( "%s", conn.RemoteAddr() ) ); err != nil {
-            log.Print( "auth error: ", err );
-            time.Sleep( time.Second )
-            conn.Close()
-        } else {
-            if newSession {
+        listenTcpServer( local, param,
+            func ( connInfo *ConnInfo ) {
                 NewConnectFromWith( connInfo, param, GetSessionConn )
-            }
-            conn.Close()
-        }
+            } )
 	}
 }
 
@@ -73,24 +86,10 @@ func StartReverseServer( param *TunnelParam, tunnelPort int, connectPort int, ho
     defer local.Close()
 
     for {
-        conn, err := local.Accept()
-        if err != nil {
-            log.Fatal(err)
-        }
-        log.Print("connected -- ", conn.RemoteAddr() )
-        connInfo := CreateConnInfo( conn, param.encPass, param.encCount, nil )
-        
-        tunnelParam := *param
-        newSession := false
-        if newSession, err = ProcessServerAuth( connInfo, &tunnelParam, fmt.Sprintf( "%s", conn.RemoteAddr() ) ); err != nil {
-            log.Print( "auth error: ", err );
-            time.Sleep( time.Second )
-        } else {
-            if newSession {
+        listenTcpServer( local, param,
+            func ( connInfo *ConnInfo ) {
                 ListenNewConnect( connInfo, connectPort, hostInfo, param, GetSessionConn )
-            }
-        }
-        conn.Close()
+            } )
     }
 }
 
@@ -101,6 +100,15 @@ type WrapWSHandler struct {
 
 func (handler WrapWSHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
+    if err := AcceptClient( req.RemoteAddr, handler.param ); err != nil {
+        log.Printf( "reject -- %s", err )
+        w.WriteHeader( http.StatusNotAcceptable )
+        //fmt.Fprintf( w, "%v\n", err )
+        time.Sleep( 3 * time.Second )
+        return
+    }
+    defer ReleaseClient( req.RemoteAddr )
+    
     wrap := func( ws *websocket.Conn) {
         handler.handle( ws, req.RemoteAddr )
     }
@@ -109,9 +117,21 @@ func (handler WrapWSHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
     wshandler.ServeHTTP( w, req )
 }
 
+func execWebSocketServer( param TunnelParam, tunnelPort int, connectSession func(conn *ConnInfo, param *TunnelParam) ) {
+    handle := func( ws *websocket.Conn, remoteAddr string ) {
+        connInfo := CreateConnInfo( ws, param.encPass, param.encCount, nil )
+        if newSession, err := ProcessServerAuth( connInfo, &param, remoteAddr ); err != nil {
+            log.Print( "auth error: ", err );
+            time.Sleep( 3 * time.Second )
+            return
+        } else {
+            if newSession {
+                connectSession( connInfo, &param )
+            }
+        }
+    }
 
-func startWebsocket( param *TunnelParam, tunnelPort int, handle func( ws *websocket.Conn, remoteAddr string ) ) {
-    wrapHandler := WrapWSHandler{ handle, param }
+    wrapHandler := WrapWSHandler{ handle, &param }
 
     http.Handle("/", wrapHandler )
     err := http.ListenAndServe( fmt.Sprintf( ":%d", tunnelPort ), nil)
@@ -123,40 +143,18 @@ func startWebsocket( param *TunnelParam, tunnelPort int, handle func( ws *websoc
 func StartWebsocketServer( param *TunnelParam, tunnelPort int ) {
     log.Print( "start websocket -- ", tunnelPort )
 
-    handle := func( ws *websocket.Conn, remoteAddr string ) {
-        tunnelParam := *param
-
-        connInfo := CreateConnInfo( ws, tunnelParam.encPass, tunnelParam.encCount, nil )
-        
-        if newSession, err := ProcessServerAuth( connInfo, &tunnelParam, remoteAddr ); err != nil {
-            log.Print( "auth error: ", err );
-            time.Sleep( time.Second )
-            return
-        } else {
-            if newSession {
-                NewConnectFromWith( connInfo, param, GetSessionConn )
-            }
-        }
-    }
-    startWebsocket( param, tunnelPort, handle )
+    execWebSocketServer(
+        *param, tunnelPort,
+        func( connInfo *ConnInfo, tunnelParam *TunnelParam) {
+            NewConnectFromWith( connInfo, tunnelParam, GetSessionConn ) } )
 }
 
 func StartReverseWebSocketServer( param *TunnelParam, tunnelPort int, connectPort int, hostInfo HostInfo ) {
     log.Print( "start reverse websocket -- ", tunnelPort )
 
-    handle := func( ws *websocket.Conn, remoteAddr string ) {
-        tunnelParam := *param
-        connInfo := CreateConnInfo( ws, tunnelParam.encPass, tunnelParam.encCount, nil )
-        
-        if newSession, err := ProcessServerAuth( connInfo, &tunnelParam, remoteAddr ); err != nil {
-            log.Print( "auth error: ", err );
-            time.Sleep( time.Second )
-            return
-        } else {
-            if newSession {
-                ListenNewConnect( connInfo, connectPort, hostInfo, &tunnelParam, GetSessionConn )
-            }
-        }
-    }
-    startWebsocket( param, tunnelPort, handle )
+    execWebSocketServer(
+        *param, tunnelPort,
+        func( connInfo *ConnInfo, tunnelParam *TunnelParam) {
+            ListenNewConnect(
+                connInfo, connectPort, hostInfo, tunnelParam, GetSessionConn ) } )
 }

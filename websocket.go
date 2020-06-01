@@ -127,7 +127,7 @@ func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param *TunnelP
     } else {
         websock, err = websocket.DialConfig( conf )
         if err != nil {
-            log.Print( "websocket error", websock, err )
+            log.Print( "websocket error", err )
             return nil, err
         }
     }
