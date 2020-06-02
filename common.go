@@ -141,10 +141,12 @@ func WriteDummy( ostream io.Writer ) error {
 // buf データ
 // ctrl 暗号化情報
 func WriteItem( ostream io.Writer, buf []byte, ctrl *CryptCtrl ) error {
-    // bakStream := ostream
-    // var buffer bytes.Buffer
-    // buffer.Grow( len(normalKindBuf)+2+len(buf))
-    // ostream = &buffer
+    // write のコール数が多いと通信効率が悪いので
+    // 一旦バッファに書き込んでから ostream に出力する。
+    bakStream := ostream
+    var buffer bytes.Buffer
+    buffer.Grow( len(normalKindBuf)+2+len(buf))
+    ostream = &buffer
 
     if _, err := ostream.Write( normalKindBuf ); err != nil {
         return err
@@ -158,7 +160,7 @@ func WriteItem( ostream io.Writer, buf []byte, ctrl *CryptCtrl ) error {
     }
     _, err := ostream.Write( buf )
 
-    // _, err = buffer.WriteTo( bakStream )
+    _, err = buffer.WriteTo( bakStream )
     return err
 }
 
