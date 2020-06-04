@@ -3,6 +3,7 @@ package main
 import (
     "encoding/binary"
     "encoding/json"
+	"unsafe"
 	"io"
     "log"
     "bytes"
@@ -121,18 +122,41 @@ func (ctrl *CryptCtrl) Decrypt( bytes []byte ) []byte {
     return ctrl.dec.Process( bytes )
 }       
 
+// 通常パッケット
 const PACKET_KIND_NORMAL = 0
+// 無通信を避けるためのダミーパケット
 const PACKET_KIND_DUMMY = 1
+// packetWriter() の処理終了を通知するためのパケット
 const PACKET_KIND_EOS = 2
+// Tunnel の通信を同期するためのパケット
+const PACKET_KIND_SYNC = 3
+const PACKET_KIND_NORMAL_DIRECT = 4
+
 
 var dummyKindBuf = []byte{ PACKET_KIND_DUMMY }
 var normalKindBuf = []byte{ PACKET_KIND_NORMAL }
+var syncKindBuf = []byte{ PACKET_KIND_SYNC }
 
 func WriteDummy( ostream io.Writer ) error {
     if _, err := ostream.Write( dummyKindBuf ); err != nil {
         return err
     }
     return nil
+}
+
+func WriteSync( ostream io.Writer, buf []byte ) error {
+    var buffer bytes.Buffer
+    buffer.Grow( len(syncKindBuf) + len(buf))
+
+    if _, err := buffer.Write( syncKindBuf ); err != nil {
+        return err
+    }
+    if _, err := buffer.Write( buf ); err != nil {
+        return err
+    }
+
+    _, err := buffer.WriteTo( ostream )
+    return err
 }
 
 // データを出力する
@@ -145,14 +169,14 @@ func WriteItem( ostream io.Writer, buf []byte, ctrl *CryptCtrl ) error {
     // 一旦バッファに書き込んでから ostream に出力する。
     bakStream := ostream
     var buffer bytes.Buffer
-    buffer.Grow( len(normalKindBuf)+2+len(buf))
+    size := uint16( len( buf ) )
+    buffer.Grow( len(normalKindBuf)+int(unsafe.Sizeof(size))+len(buf))
     ostream = &buffer
 
     if _, err := ostream.Write( normalKindBuf ); err != nil {
         return err
     }
-    if err := binary.Write(
-        ostream, binary.BigEndian, uint16( len( buf ) ) ); err != nil {
+    if err := binary.Write( ostream, binary.BigEndian, size ); err != nil {
         return err
     }
     if ctrl != nil {
@@ -170,6 +194,16 @@ func WriteHeader( con io.Writer, hostInfo HostInfo, ctrl *CryptCtrl ) error {
     return WriteItem( con, bytes, ctrl )
 }
 
+func ReadPackNo( istream io.Reader, kind int8 ) ([]byte,int8,error) {
+    var packNo int64
+    buf := make([]byte,unsafe.Sizeof( packNo ))
+    _, err := io.ReadFull( istream, buf )
+    if err != nil {
+        return nil, kind, err
+    }
+    return buf, kind, nil
+}
+
 // データを読み込む
 func ReadItem( istream io.Reader, ctrl *CryptCtrl, workBuf []byte ) ([]byte,int8,error) {
     kindbuf := make([]byte,1)
@@ -177,9 +211,13 @@ func ReadItem( istream io.Reader, ctrl *CryptCtrl, workBuf []byte ) ([]byte,int8
     if error != nil {
         return nil, PACKET_KIND_NORMAL, error
     }
-    switch kindbuf[ 0 ] {
+    switch kind := kindbuf[ 0 ]; kind {
     case PACKET_KIND_DUMMY:
         return nil, PACKET_KIND_DUMMY, nil
+    case PACKET_KIND_SYNC:
+        return ReadPackNo( istream, int8(kind) )
+    // case PACKET_KIND_ACK:
+    //     return ReadPackNo( istream, int8(kind) )
     case PACKET_KIND_NORMAL:
         buf := make([]byte,2)
         _, error := io.ReadFull( istream, buf )

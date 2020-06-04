@@ -1,9 +1,9 @@
 package main
 
 import (
+    "encoding/binary"
     "container/list"
 	"container/ring"
-    //"encoding/binary"
 	"io"
 	"log"
 	"fmt"
@@ -11,7 +11,7 @@ import (
     "regexp"
     "time"
     "sync"
-    //"bytes"
+    "bytes"
 )
 
 // tunnel の制御パラメータ
@@ -34,13 +34,20 @@ type TunnelParam struct {
     keepAliveInterval int
     // magic
     magic []byte
-    //
+    // CTRL_*
     ctrl int
+    // サーバ情報
+    serverInfo HostInfo
 }
 
 // セッションの再接続時に、
 // 再送信するためのデータを保持しておくパケット数
-const PACKET_NUM = 100
+const PACKET_NUM_BASE = 100
+const PACKET_NUM_DIV = 2
+const PACKET_NUM = ( PACKET_NUM_DIV * PACKET_NUM_BASE )
+
+// 書き込みを結合する最大サイズ
+const MAX_PACKET_SIZE = 10 * 1024
 
 // セッションの情報
 type SessionInfo struct {
@@ -230,6 +237,15 @@ type SessionPacket struct {
     bytes []byte
 }
 
+func (sessionInfo *SessionInfo ) postWriteData(bytes []byte) {
+    list := sessionInfo.WritePackList
+    list.PushBack( SessionPacket{ sessionInfo.WriteNo, bytes } )
+    if list.Len() > PACKET_NUM {
+        list.Remove( list.Front() )
+    }
+    sessionInfo.WriteNo++
+    sessionInfo.wroteSize += int64(len( bytes ))
+}
 
 // コネクションへのデータ書き込み
 //
@@ -238,17 +254,18 @@ type SessionPacket struct {
 // @param info コネクション
 // @param bytes 書き込みデータ
 // @return error 失敗した場合 error
-func (info *ConnInfo) writeData( bytes []byte ) error {
-    if err := WriteItem( info.Conn, bytes, info.CryptCtrlObj ); err != nil {
+func (info *ConnInfo) writeData( stream io.Writer, bytes []byte ) error {
+    if err := WriteItem( stream, bytes, info.CryptCtrlObj ); err != nil {
         return err
     }
-    list := info.SessionInfo.WritePackList
-    list.PushBack( SessionPacket{ info.SessionInfo.WriteNo, bytes } )
-    if list.Len() > PACKET_NUM {
-        list.Remove( list.Front() )
-    }
-    info.SessionInfo.WriteNo++
-    info.SessionInfo.wroteSize += int64(len( bytes ))
+    info.SessionInfo.postWriteData( bytes )
+    // list := info.SessionInfo.WritePackList
+    // list.PushBack( SessionPacket{ info.SessionInfo.WriteNo, bytes } )
+    // if list.Len() > PACKET_NUM {
+    //     list.Remove( list.Front() )
+    // }
+    // info.SessionInfo.WriteNo++
+    // info.SessionInfo.wroteSize += int64(len( bytes ))
     return nil
 }
 
@@ -257,7 +274,7 @@ func (info *ConnInfo) writeData( bytes []byte ) error {
 // @param info コネクション
 // @param bytes 書き込みデータ
 // @return error 失敗した場合 error
-func (info *ConnInfo) readData( bytes []byte ) ([]byte, error) {
+func (info *ConnInfo) readData( bytes []byte, syncChan chan int64 ) ([]byte, error) {
     var resultBuf []byte
     for {
         decBuf, kind, err := ReadItem( info.Conn, info.CryptCtrlObj, bytes )
@@ -268,8 +285,15 @@ func (info *ConnInfo) readData( bytes []byte ) ([]byte, error) {
             resultBuf = decBuf
             break
         }
-        // kind が PACKET_KIND_NORMAL でない場合は読み飛す
-        // log.Print( "skip kind -- ", kind )
+        switch kind {
+        case PACKET_KIND_SYNC:
+            packNo := int64(binary.BigEndian.Uint64( decBuf ))
+            // 相手が受けとったら syncChan を更新して、送信処理を進められるように設定
+            syncChan <- packNo
+        default:
+            // 読み飛す。
+            //log.Print( "skip kind -- ", kind )
+        }
     }
     info.SessionInfo.readSize += int64(len( resultBuf ))
     info.SessionInfo.ReadNo++
@@ -385,7 +409,7 @@ func (info *pipeInfo) getConn() (int, *ConnInfo) {
 //
 // @param info pipe 情報
 // @param dst 送信先
-func tunnel2Stream( info *pipeInfo, dst io.Writer ) {
+func tunnel2Stream( info *pipeInfo, dst io.Writer, packChan chan PackInfo, syncChan chan int64 ) {
 
     rev, connInfo := info.getConn()
     sessionInfo := connInfo.SessionInfo
@@ -396,7 +420,7 @@ func tunnel2Stream( info *pipeInfo, dst io.Writer ) {
         var readBuf []byte
         for {
             var readerr error
-            readBuf, readerr = connInfo.readData( buf )
+            readBuf, readerr = connInfo.readData( buf, syncChan )
             if readerr != nil {
                 log.Printf(
                     "tunnel read err log: readNo=%d, err=%s",
@@ -416,9 +440,22 @@ func tunnel2Stream( info *pipeInfo, dst io.Writer ) {
         }
         if readSize == 0 {
             info.end = true
+            if len( syncChan ) == 0 {
+                // 終了する際に、 stream2Tunnel() 側が待ちになっている可能性があるので
+                // ここで syncChan を通知してやる
+                syncChan <- 0
+            }
             log.Print( "read 0 end" )
             break;
         }
+
+        if ( ( sessionInfo.ReadNo - 1 ) % PACKET_NUM_BASE ) == PACKET_NUM_BASE - 1 {
+            // 一定数読み込んだら SYNC を返す
+            var buffer bytes.Buffer
+            binary.Write( &buffer, binary.BigEndian, sessionInfo.ReadNo - 1 )
+            packChan <- PackInfo{ buffer.Bytes(), PACKET_KIND_SYNC }
+        }
+        
         _, writeerr := dst.Write( readBuf )
         if writeerr != nil {
             log.Printf(
@@ -435,9 +472,9 @@ func tunnel2Stream( info *pipeInfo, dst io.Writer ) {
 // @param connInfo コネクション情報
 // @param rev リビジョン
 // @return bool 処理を続ける場合 true
-func rewirte2Tunnel( info *pipeInfo, connInfo *ConnInfo, rev int ) bool {
+func rewirte2Tunnel( info *pipeInfo, connInfoRev *ConnInfoRev ) bool {
     // 再接続後にパケットの再送を行なう
-    sessionInfo := connInfo.SessionInfo
+    sessionInfo := connInfoRev.connInfo.SessionInfo
     if sessionInfo.ReWriteNo == -1 {
         return true
     }
@@ -449,11 +486,12 @@ func rewirte2Tunnel( info *pipeInfo, connInfo *ConnInfo, rev int ) bool {
             if packet.no == sessionInfo.ReWriteNo {
                 // 再送対象の packet が見つかった
                 err := WriteItem(
-                    connInfo.Conn, packet.bytes, connInfo.CryptCtrlObj )
+                    connInfoRev.connInfo.Conn, packet.bytes, connInfoRev.connInfo.CryptCtrlObj )
                 if err != nil {
                     end := false
-                    connInfo.Conn.Close()                    
-                    connInfo, rev, end = info.reconnect( "rewrite", rev )
+                    connInfoRev.connInfo.Conn.Close()                    
+                    connInfoRev.connInfo, connInfoRev.rev, end =
+                        info.reconnect( "rewrite", connInfoRev.rev )
                     if end {
                         return false
                     }
@@ -479,13 +517,22 @@ func rewirte2Tunnel( info *pipeInfo, connInfo *ConnInfo, rev int ) bool {
 //
 // @param src 送信元
 // @param info pipe 情報
-func stream2Tunnel( src io.Reader, info *pipeInfo, packChan chan PackInfo) {
+func stream2Tunnel( src io.Reader, info *pipeInfo, packChan chan PackInfo, syncChan chan int64) {
 
     _, connInfo := info.getConn()
     sessionInfo := connInfo.SessionInfo
 
     end := false
+    bufCount := int64(0)
     for !end {
+        if ( bufCount % PACKET_NUM_BASE ) == 0 {
+            // tunnel 切断復帰の再接続時の再送信用バッファを残しておくため、
+            // PACKET_NUM_BASE 毎に syncChan を取得し、
+            // 相手が受信していないのに送信し過ぎないようにする。
+            <- syncChan
+        }
+        bufCount++
+        
         // バッファの切り替え
         ring := sessionInfo.BufRing
         buf := ring.Value.([]byte)
@@ -508,50 +555,125 @@ func stream2Tunnel( src io.Reader, info *pipeInfo, packChan chan PackInfo) {
 }
 
 type PackInfo struct {
+    // 書き込みデータ
     bytes []byte
+    // PACKET_KIND_*
     kind int8
 }
 
+type ConnInfoRev struct {
+    connInfo *ConnInfo
+    rev int
+}
+
+func packetWriterSub(
+    info *pipeInfo, packet *PackInfo, connInfoRev *ConnInfoRev,
+    write func( packet *PackInfo, stream io.Writer, connInfo *ConnInfo ) (bool,error) ) bool {
+    for {
+        var writeerr error
+
+        if ret, err := write( packet, connInfoRev.connInfo.Conn, connInfoRev.connInfo ); err != nil {
+            writeerr = err
+        } else if !ret {
+            return false
+        }
+        if writeerr != nil {
+            log.Printf(
+                "tunnel write err log: writeNo=%d, err=%s",
+                connInfoRev.connInfo.SessionInfo.WriteNo, writeerr )
+            end := false
+            connInfoRev.connInfo, connInfoRev.rev, end =
+                info.reconnect( "write", connInfoRev.rev )
+            if end {
+                return false
+            }
+            if !rewirte2Tunnel( info, connInfoRev ) {
+                return true
+            }
+        } else {
+            return true
+        }
+        log.Print( "retry to write -- ", connInfoRev.connInfo.SessionInfo.WriteNo )
+    }
+}
+
+// パケット書き込み関数
+//
+// go routine で実行される
+//
+// @param info pipe制御情報
+// @param packChan PackInfo を受けとる channel 
 func packetWriter( info *pipeInfo, packChan chan PackInfo ) {
 
-    rev, connInfo := info.getConn()
-    sessionInfo := connInfo.SessionInfo
+    writePack := func( packet *PackInfo, stream io.Writer, connInfo *ConnInfo ) (bool, error) {
+        var writeerr error
+        switch packet.kind {
+        case PACKET_KIND_EOS:
+            log.Printf( "eos -- sessionId %d", connInfo.SessionInfo.SessionId )
+            info.fin <- true
+            return false, nil
+        case PACKET_KIND_SYNC:
+            writeerr = WriteSync( stream, packet.bytes )
+        case PACKET_KIND_NORMAL:
+            writeerr = connInfo.writeData( connInfo.Conn, packet.bytes )
+        case PACKET_KIND_NORMAL_DIRECT:
+            writeerr = connInfo.writeData( stream, packet.bytes )
+        case PACKET_KIND_DUMMY:
+            writeerr = WriteDummy( stream )
+        default:
+            log.Fatal( "illegal kind -- ", packet.kind )
+        }
+        return true, writeerr
+    }
 
+    var connInfoRev ConnInfoRev
+    connInfoRev.rev, connInfoRev.connInfo = info.getConn()
+
+    var buffer bytes.Buffer
+    
     for {
         packet := <-packChan
 
-        for {
-            var writeerr error
-            
-            switch packet.kind {
-            case PACKET_KIND_EOS:
-                log.Printf( "eos -- sessionId %d", sessionInfo.SessionId )
-                info.fin <- true
-                return
-            case PACKET_KIND_NORMAL:
-                writeerr = connInfo.writeData( packet.bytes )
-            case PACKET_KIND_DUMMY:
-                writeerr = WriteDummy( connInfo.Conn )
-            default:
-                log.Fatal( "illegal kind -- ", packet.kind )
-            }
+        buffer.Reset()
 
-            if writeerr != nil {
-                log.Printf(
-                    "tunnel write err log: writeNo=%d, err=%s",
-                    sessionInfo.WriteNo, writeerr )
-                end := false
-                connInfo, rev, end = info.reconnect( "write", rev )
-                if end {
-                    break
-                }
-                if !rewirte2Tunnel( info, connInfo, rev ) {
-                    break
-                }
-            } else {
+        for len( packChan ) > 0 && packet.kind == PACKET_KIND_NORMAL {
+            // 書き込み依頼が残っている場合、効率化のため一旦 buffer に出力して結合する。
+
+            if buffer.Len() + len( packet.bytes ) > BUFSIZE {
                 break
             }
-            log.Print( "retry to write -- ", sessionInfo.WriteNo )
+
+            if _, err := writePack(
+                &PackInfo{ packet.bytes, PACKET_KIND_NORMAL_DIRECT },
+                &buffer, connInfoRev.connInfo ); err != nil {
+                log.Fatal( "writePack -- ", err )
+            }
+
+            packet = <- packChan
+        }
+
+        if buffer.Len() != 0 {
+            // buffer にデータがセットされていれば、
+            // 結合データがあるので buffer を書き込む
+            //log.Print( "concat -- ", len( buffer.Bytes() ) )
+            cont := true
+            cont = packetWriterSub(
+                info, nil, &connInfoRev,
+                func( packet *PackInfo, stream io.Writer, workConnInfo *ConnInfo ) (bool,error) {
+                    if _, err := workConnInfo.Conn.Write( buffer.Bytes() ); err != nil {
+                        return false, err
+                    } else {
+                        return true, nil
+                    }
+                })
+            if !cont {
+                break
+            }
+        }
+        cont := true
+        cont = packetWriterSub( info, &packet, &connInfoRev, writePack )
+        if !cont {
+            break
         }
     }
 }
@@ -561,7 +683,7 @@ const KEEP_ALIVE_INTERVAL = 20 * 1000
 // keep alive の時間経過を確認する間隔 (ミリ秒)。
 // これが長いと、 relaySession の後処理の待ち時間がかかる。
 // 短いと、負荷がかかる。
-const SLEEP_INTERVAL = 1000
+const SLEEP_INTERVAL = 500
 
 // tunnel で トンネリングされている中で、 local と tunnel の通信を中継する
 //
@@ -572,11 +694,19 @@ func relaySession( connInfo *ConnInfo, local io.ReadWriteCloser, interval int, r
     info := pipeInfo{
         0, reconnect, new( sync.Mutex ), false, make(chan bool), false, connInfo }
 
-    packChan := make(chan PackInfo)
+    // packetWriter に PackInfo を依頼するための channel
+    packChan := make(chan PackInfo, PACKET_NUM )
+
+    // tunnel 切断復帰の再接続時の再送信用バッファのフロー調整用 channel
+    syncChan := make(chan int64, PACKET_NUM_DIV )
+    for count := 0; count < PACKET_NUM_DIV; count++ {
+        syncChan <- 0
+    }
+    
 
     go packetWriter( &info, packChan )
-    go stream2Tunnel( local, &info, packChan )
-    go tunnel2Stream( &info, local )
+    go stream2Tunnel( local, &info, packChan, syncChan )
+    go tunnel2Stream( &info, local, packChan, syncChan )
 
     keepaliveEnd := make(chan bool)
     keepalive := func() {
@@ -640,10 +770,10 @@ func CreateToReconnectFunc( reconnect func( sessionInfo *SessionInfo ) (*ConnInf
 // @param port 待ち受けるポート番号
 // @param parm トンネル情報
 // @param reconnect 再接続関数
-func ListenNewConnect( connInfo *ConnInfo, port int, hostInfo HostInfo, param *TunnelParam, reconnect func( sessionInfo *SessionInfo ) *ConnInfo ) {
+func ListenNewConnect( connInfo *ConnInfo, port HostInfo, hostInfo HostInfo, param *TunnelParam, reconnect func( sessionInfo *SessionInfo ) *ConnInfo ) {
     defer connInfo.Conn.Close()
 
-    local, err := net.Listen("tcp", fmt.Sprintf( ":%d", port ) )
+    local, err := net.Listen("tcp", port.toStr() )
     if err != nil {
         log.Print(err)
     } else {
@@ -653,7 +783,7 @@ func ListenNewConnect( connInfo *ConnInfo, port int, hostInfo HostInfo, param *T
         //defer local.Close()
         defer dummy()
 
-        log.Printf( "wating with %d\n", port )
+        log.Printf( "wating with %s\n", port.toStr() )
         src, err := local.Accept()
         if err != nil {
             log.Fatal(err)

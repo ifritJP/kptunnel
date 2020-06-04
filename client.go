@@ -25,10 +25,10 @@ func connectTunnel( serverInfo HostInfo, param *TunnelParam, sessionInfo *Sessio
     return connInfo, nil
 }
 
-func StartClient( param *TunnelParam, serverInfo HostInfo, port int, hostInfo HostInfo ) {
+func StartClient( param *TunnelParam, port HostInfo, hostInfo HostInfo ) {
     for {
         sessionParam := *param
-        connInfo, err := connectTunnel( serverInfo, &sessionParam, nil )
+        connInfo, err := connectTunnel( param.serverInfo, &sessionParam, nil )
         if err != nil {
             break
         }
@@ -36,17 +36,17 @@ func StartClient( param *TunnelParam, serverInfo HostInfo, port int, hostInfo Ho
 
         reconnect := CreateToReconnectFunc(
             func( sessionInfo *SessionInfo ) (*ConnInfo, error) {
-                return connectTunnel( serverInfo, &sessionParam, nil )
+                return connectTunnel( param.serverInfo, &sessionParam, nil )
             })
         ListenNewConnect( connInfo, port, hostInfo, &sessionParam, reconnect )
     }
 }
 
 
-func StartReverseClient( param *TunnelParam, serverInfo HostInfo ) {
+func StartReverseClient( param *TunnelParam ) {
     for {
         sessionParam := *param
-        connInfo, err := connectTunnel( serverInfo, &sessionParam, nil )
+        connInfo, err := connectTunnel( param.serverInfo, &sessionParam, nil )
         if err != nil {
             break
         }
@@ -54,14 +54,14 @@ func StartReverseClient( param *TunnelParam, serverInfo HostInfo ) {
 
         reconnect := CreateToReconnectFunc(
             func( sessionInfo *SessionInfo ) (*ConnInfo, error) {
-                return connectTunnel( serverInfo, &sessionParam, nil )
+                return connectTunnel( param.serverInfo, &sessionParam, nil )
             })
         NewConnectFromWith( connInfo, &sessionParam, reconnect )
     }
 }
 
 
-func StartWebSocketClient( userAgent string, param *TunnelParam, serverInfo HostInfo, proxyHost string, port int, hostInfo HostInfo ) {
+func StartWebSocketClient( userAgent string, param *TunnelParam, serverInfo HostInfo, proxyHost string, port HostInfo, hostInfo HostInfo ) {
 
     for {
         sessionParam := *param

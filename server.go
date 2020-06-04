@@ -10,9 +10,10 @@ import (
     "golang.org/x/net/websocket"
 )
 
-func StartEchoServer(port int) {
-    log.Print( "start echo --- ", port )
-	local, err := net.Listen("tcp", fmt.Sprintf( ":%d", port) )
+func StartEchoServer( serverInfo HostInfo ) {
+    server := serverInfo.toStr()
+    log.Print( "start echo --- ", server )
+	local, err := net.Listen("tcp", server )
 	if err != nil {
 		log.Fatal( err )
 	}
@@ -60,9 +61,9 @@ func listenTcpServer( local net.Listener, param *TunnelParam, process func( conn
     }
 }
 
-func StartServer(param *TunnelParam, port int) {
-    log.Print( "wating --- ", port )
-	local, err := net.Listen("tcp", fmt.Sprintf( ":%d", port) )
+func StartServer(param *TunnelParam ) {
+    log.Print( "wating --- ", param.serverInfo.toStr() )
+	local, err := net.Listen("tcp", param.serverInfo.toStr()  )
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -77,9 +78,9 @@ func StartServer(param *TunnelParam, port int) {
 }
 
 
-func StartReverseServer( param *TunnelParam, tunnelPort int, connectPort int, hostInfo HostInfo ) {
-    log.Print( "wating reverse --- ", tunnelPort )
-    local, err := net.Listen("tcp", fmt.Sprintf( ":%d", tunnelPort) )
+func StartReverseServer( param *TunnelParam, connectPort HostInfo, hostInfo HostInfo ) {
+    log.Print( "wating reverse --- ", param.serverInfo.toStr() )
+    local, err := net.Listen("tcp", param.serverInfo.toStr() )
     if err != nil {
         log.Fatal(err)
     }
@@ -117,7 +118,7 @@ func (handler WrapWSHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
     wshandler.ServeHTTP( w, req )
 }
 
-func execWebSocketServer( param TunnelParam, tunnelPort int, connectSession func(conn *ConnInfo, param *TunnelParam) ) {
+func execWebSocketServer( param TunnelParam, connectSession func(conn *ConnInfo, param *TunnelParam) ) {
     handle := func( ws *websocket.Conn, remoteAddr string ) {
         connInfo := CreateConnInfo( ws, param.encPass, param.encCount, nil )
         if newSession, err := ProcessServerAuth( connInfo, &param, remoteAddr ); err != nil {
@@ -134,26 +135,26 @@ func execWebSocketServer( param TunnelParam, tunnelPort int, connectSession func
     wrapHandler := WrapWSHandler{ handle, &param }
 
     http.Handle("/", wrapHandler )
-    err := http.ListenAndServe( fmt.Sprintf( ":%d", tunnelPort ), nil)
+    err := http.ListenAndServe( param.serverInfo.toStr() , nil)
     if err != nil {
         panic("ListenAndServe: " + err.Error())
     }
 }
 
-func StartWebsocketServer( param *TunnelParam, tunnelPort int ) {
-    log.Print( "start websocket -- ", tunnelPort )
+func StartWebsocketServer( param *TunnelParam ) {
+    log.Print( "start websocket -- ", param.serverInfo.toStr()  )
 
     execWebSocketServer(
-        *param, tunnelPort,
+        *param,
         func( connInfo *ConnInfo, tunnelParam *TunnelParam) {
             NewConnectFromWith( connInfo, tunnelParam, GetSessionConn ) } )
 }
 
-func StartReverseWebSocketServer( param *TunnelParam, tunnelPort int, connectPort int, hostInfo HostInfo ) {
-    log.Print( "start reverse websocket -- ", tunnelPort )
+func StartReverseWebSocketServer( param *TunnelParam, connectPort HostInfo, hostInfo HostInfo ) {
+    log.Print( "start reverse websocket -- ", param.serverInfo.toStr() )
 
     execWebSocketServer(
-        *param, tunnelPort,
+        *param, 
         func( connInfo *ConnInfo, tunnelParam *TunnelParam) {
             ListenNewConnect(
                 connInfo, connectPort, hostInfo, tunnelParam, GetSessionConn ) } )

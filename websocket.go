@@ -77,7 +77,6 @@ func (info *proxyInfo) Dial(network, addr string) (net.Conn, error) {
         log.Print( "proxy wait the response" )
         resp, err := http.ReadResponse(bufio.NewReader(conn), req)
         log.Print( "proxy read the response" )
-        defer resp.Body.Close()
         if err != nil {
             return err
         }

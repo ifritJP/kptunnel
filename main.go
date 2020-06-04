@@ -10,7 +10,7 @@ import "net/url"
 
 
 // 2byte の MAX。
-// ここを大きくする場合は、WriteItem, ReadItem の処理を変更する。
+// ここを 65535 より大きくする場合は、WriteItem, ReadItem の処理を変更する。
 const BUFSIZE=65535
 
 func hostname2HostInfo( name string ) *HostInfo {
@@ -38,6 +38,10 @@ func hostname2HostInfo( name string ) *HostInfo {
 
 func main() {
 
+    if BUFSIZE >= 65536 {
+        fmt.Printf( "BUFSIZE is illegal. -- ", 65536 )
+    }
+    
     var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
     mode := cmd.String( "mode", "",
         "<server|r-server|wsserver|r-wsserver|client|r-client|wsclient|r-wsclient>" )
@@ -53,7 +57,7 @@ func main() {
     ipPattern := cmd.String( "ip", "", "allow ip pattern" )
     proxyHost := cmd.String( "proxy", "", "proxy server" )
     userAgent := cmd.String( "UA", "Go Http Client", "user agent for websocket" )
-    sessionPort := cmd.Int( "port", 0, "session port" )
+    sessionPort := cmd.String( "port", "", "session port. (0.0.0.0:1234 or localhost:1234)" )
     interval := cmd.Int( "int", 20, "keep alive interval" )
     ctrl := cmd.String( "ctrl", "", "[bench]" )
 
@@ -88,11 +92,14 @@ func main() {
         usage()
     }
 
+    var sessionHostInfo *HostInfo
     if *mode == "r-server" || *mode == "r-wsserver" ||
         *mode == "client" || *mode == "wsclient" {
-        if *sessionPort == 0 {
+        if *sessionPort == "" {
             fmt.Print( "set -port option!\n" )
             usage()
+        } else {
+            sessionHostInfo = hostname2HostInfo( *sessionPort )
         }
         if remoteInfo == nil {
             fmt.Print( "set -remote option!\n" )
@@ -105,37 +112,37 @@ func main() {
         *interval = 2
     }
     
-    echoPort := 8002
     websocketServerInfo := HostInfo{ "ws://", serverInfo.Name, serverInfo.Port, "/" }
     var pattern *regexp.Regexp
     if *ipPattern != "" {
         pattern = regexp.MustCompile( *ipPattern )
     }
     param := &TunnelParam{
-        pass, *mode, pattern, encPass, *encCount,*interval * 1000, getKey( magic ), 0 }
+        pass, *mode, pattern, encPass, *encCount,*interval * 1000,
+        getKey( magic ), 0, *serverInfo }
     if *ctrl == "bench" {
         param.ctrl = CTRL_BENCH
     }
 
     switch *mode {
     case "server":
-        StartServer( param, serverInfo.Port )
+        StartServer( param )
     case "r-server":
-        StartReverseServer( param, serverInfo.Port, *sessionPort, *remoteInfo )
+        StartReverseServer( param, *sessionHostInfo, *remoteInfo )
     case "wsserver":
-        StartWebsocketServer( param, serverInfo.Port )
+        StartWebsocketServer( param )
     case "r-wsserver":
-        StartReverseWebSocketServer( param, serverInfo.Port, *sessionPort, *remoteInfo )
+        StartReverseWebSocketServer( param, *sessionHostInfo, *remoteInfo )
     case "client":
-        StartClient( param, *serverInfo, *sessionPort, *remoteInfo )
+        StartClient( param, *sessionHostInfo, *remoteInfo )
     case "r-client":
-        StartReverseClient( param, *serverInfo )
+        StartReverseClient( param )
     case "wsclient":
-        StartWebSocketClient( *userAgent, param, websocketServerInfo, *proxyHost, *sessionPort, *remoteInfo )
+        StartWebSocketClient( *userAgent, param, websocketServerInfo, *proxyHost, *sessionHostInfo, *remoteInfo )
     case "r-wsclient":
         StartReverseWebSocketClient( *userAgent, param, websocketServerInfo, *proxyHost )
     case "echo":
-        StartEchoServer( echoPort )
+        StartEchoServer( *serverInfo )
     case "test":
         pattern = regexp.MustCompile( "[ ]*:[ 0-9]*$" )
         if loc := pattern.FindStringIndex( "1.2.3.4: 123" ); loc != nil {
