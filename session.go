@@ -259,13 +259,6 @@ func (info *ConnInfo) writeData( stream io.Writer, bytes []byte ) error {
         return err
     }
     info.SessionInfo.postWriteData( bytes )
-    // list := info.SessionInfo.WritePackList
-    // list.PushBack( SessionPacket{ info.SessionInfo.WriteNo, bytes } )
-    // if list.Len() > PACKET_NUM {
-    //     list.Remove( list.Front() )
-    // }
-    // info.SessionInfo.WriteNo++
-    // info.SessionInfo.wroteSize += int64(len( bytes ))
     return nil
 }
 
