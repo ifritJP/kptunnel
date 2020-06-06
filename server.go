@@ -86,10 +86,17 @@ func StartReverseServer( param *TunnelParam, connectPort HostInfo, hostInfo Host
     }
     defer local.Close()
 
+    listenInfo, err := NewListen( connectPort )
+    if err != nil {
+        log.Fatal( err )
+    }
+    defer listenInfo.Close()
+    
     for {
-        listenTcpServer( local, param,
+        go listenTcpServer( local, param,
             func ( connInfo *ConnInfo ) {
-                ListenNewConnect( connInfo, connectPort, hostInfo, param, GetSessionConn )
+                ListenNewConnect(
+                    listenInfo, connInfo, hostInfo, param, false, GetSessionConn )
             } )
     }
 }
@@ -128,6 +135,8 @@ func execWebSocketServer( param TunnelParam, connectSession func(conn *ConnInfo,
         } else {
             if newSession {
                 connectSession( connInfo, &param )
+            } else {
+                connectSession( connInfo, &param )
             }
         }
     }
@@ -153,9 +162,15 @@ func StartWebsocketServer( param *TunnelParam ) {
 func StartReverseWebSocketServer( param *TunnelParam, connectPort HostInfo, hostInfo HostInfo ) {
     log.Print( "start reverse websocket -- ", param.serverInfo.toStr() )
 
+    listenInfo, err := NewListen( connectPort )
+    if err != nil {
+        log.Fatal( err )
+    }
+    defer listenInfo.Close()
+
     execWebSocketServer(
         *param, 
         func( connInfo *ConnInfo, tunnelParam *TunnelParam) {
             ListenNewConnect(
-                connInfo, connectPort, hostInfo, tunnelParam, GetSessionConn ) } )
+                listenInfo, connInfo, hostInfo, tunnelParam, false, GetSessionConn ) } )
 }

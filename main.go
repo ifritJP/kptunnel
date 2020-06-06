@@ -4,10 +4,12 @@ import "flag"
 import "fmt"
 import "regexp"
 import "os"
+import "bytes"
 import "strings"
 import "strconv"
 import "net/url"
-
+import "net/http"
+import _ "net/http/pprof"
 
 // 2byte の MAX。
 // ここを 65535 より大きくする場合は、WriteItem, ReadItem の処理を変更する。
@@ -60,6 +62,7 @@ func main() {
     sessionPort := cmd.String( "port", "", "session port. (0.0.0.0:1234 or localhost:1234)" )
     interval := cmd.Int( "int", 20, "keep alive interval" )
     ctrl := cmd.String( "ctrl", "", "[bench]" )
+    prof := cmd.String( "prof", "", "profile port. (:1234)" )
 
     usage := func() {
         fmt.Fprintf(cmd.Output(), "\nUsage: %s [options]\n\n", os.Args[0])
@@ -71,6 +74,12 @@ func main() {
 
     cmd.Parse( os.Args[1:] )
 
+    if *mode == "test" {
+        test()
+        os.Exit(0)
+    }
+
+    
 
     if *pass == "" {
         fmt.Print( "warning: password is default. set -pass option.\n" )
@@ -79,7 +88,7 @@ func main() {
         fmt.Print( "warning: encrypt password is default. set -encPass option.\n" )
     }
     magic := []byte( *pass + *encPass )
-
+   
     
     var remoteInfo *HostInfo
     if *remote != "" {
@@ -124,6 +133,12 @@ func main() {
         param.ctrl = CTRL_BENCH
     }
 
+    if *prof != "" {
+        go func() {
+            fmt.Println(http.ListenAndServe( *prof, nil))
+        }()
+    }
+
     switch *mode {
     case "server":
         StartServer( param )
@@ -143,12 +158,13 @@ func main() {
         StartReverseWebSocketClient( *userAgent, param, websocketServerInfo, *proxyHost )
     case "echo":
         StartEchoServer( *serverInfo )
-    case "test":
-        pattern = regexp.MustCompile( "[ ]*:[ 0-9]*$" )
-        if loc := pattern.FindStringIndex( "1.2.3.4: 123" ); loc != nil {
-            fmt.Print( loc, loc[0], loc[1], "1.2.3.4: 123"[:loc[0]] )
-            
-        }
-            
     }
+}
+
+func test() {
+    var buf bytes.Buffer
+    buf.Grow( 100 )
+    fmt.Printf( "%d\n", buf.Cap() )
+    buf.Reset()
+    fmt.Printf( "%d\n", buf.Cap() )
 }
