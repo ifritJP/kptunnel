@@ -134,6 +134,16 @@ type ConnInTunnelInfo struct {
     respHeader chan *CtrlRespHeader
 }
 
+const Session_state_authchallenge = "authchallenge"
+const Session_state_authresponse = "authresponse"
+const Session_state_authresult = "authresult"
+const Session_state_authmiss = "authmiss"
+const Session_state_header = "header"
+const Session_state_respheader = "respheader"
+const Session_state_connected = "connected"
+const Session_state_reconnecting = "reconnecting"
+const Session_state_disconnected = "disconnected"
+
 // セッションの情報
 type SessionInfo struct {
     // セッションを識別する ID
@@ -164,6 +174,14 @@ type SessionInfo struct {
     ReWriteNo int64
 
     ctrlInfo CtrlInfo
+
+    state string
+
+    isTunnelServer bool
+}
+
+func (sessionInfo *SessionInfo) SetState(state string) {
+    sessionInfo.state = state
 }
 
 func (sessionInfo *SessionInfo) Setup() {
@@ -181,28 +199,59 @@ func (sessionInfo *SessionInfo) Setup() {
 
 }
 
-func NewEmptySessionInfo( sessionId int ) *SessionInfo {
+func newEmptySessionInfo( sessionId int, isTunnelServer bool ) *SessionInfo {
     sessionInfo := &SessionInfo{
         sessionId, make(chan PackInfo, PACKET_NUM ), 0, 0,
         map[uint32] *ConnInTunnelInfo{}, CITIID_USR, 0, 0,
-        new( list.List ), -1, CtrlInfo{} }
+        new( list.List ), -1, CtrlInfo{}, "None", isTunnelServer }
 
     sessionInfo.Setup()
     return sessionInfo
 }
 
+func DumpSession( stream io.Writer ) {
+    sessionMgr.mutex.Lock()
+    defer sessionMgr.mutex.Unlock()
+
+    for sessionId, sessionInfo := range( sessionMgr.sessionId2info ) {
+        fmt.Fprintf( stream, "sessionId: %d\n", sessionId )
+        fmt.Fprintf( stream, "state: %s\n", sessionInfo.state )
+        fmt.Fprintf(
+            stream, "WriteNo, ReadNo: %d %d\n",
+            sessionInfo.WriteNo, sessionInfo.ReadNo )
+        fmt.Fprintf( stream, "packChan: %d\n", len( sessionInfo.packChan ) )
+        fmt.Fprintf(
+            stream, "writeSize, ReadSize: %d, %d\n",
+            sessionInfo.wroteSize, sessionInfo.readSize )
+        fmt.Fprintf( stream, "citiId2Info: %d\n", len( sessionInfo.citiId2Info ))
+
+
+
+        fmt.Fprintf( stream, "------------\n");
+    }
+}
+
 var nextSessionId = 0
-func NewSessionInfo() *SessionInfo {
+func NewSessionInfo( isTunnelServer bool ) *SessionInfo {
     sessionMgr.mutex.Lock()
     defer sessionMgr.mutex.Unlock()
 
     nextSessionId++
 
-    sessionInfo := NewEmptySessionInfo( nextSessionId )
+    sessionInfo := newEmptySessionInfo( nextSessionId, isTunnelServer )
     sessionMgr.sessionId2info[ sessionInfo.SessionId ] = sessionInfo
 
     return sessionInfo
 }
+
+func (sessionInfo *SessionInfo) UpdateSessionId(sessionId int) {
+    sessionMgr.mutex.Lock()
+    defer sessionMgr.mutex.Unlock()
+    
+    sessionInfo.SessionId = sessionId
+    sessionMgr.sessionId2info[ sessionInfo.SessionId ] = sessionInfo
+}
+
 
 func NewConnInTunnelInfo( conn io.ReadWriteCloser, citiId uint32 ) *ConnInTunnelInfo {
     citi := &ConnInTunnelInfo{
@@ -302,9 +351,11 @@ type ConnInfo struct {
 // @param count 暗号化回数
 // @param sessionInfo セッション情報
 // @return ConnInfo
-func CreateConnInfo( conn io.ReadWriteCloser, pass *string, count int, sessionInfo *SessionInfo ) *ConnInfo {
+func CreateConnInfo(
+    conn io.ReadWriteCloser, pass *string, count int,
+    sessionInfo *SessionInfo, isTunnelServer bool ) *ConnInfo {
     if sessionInfo == nil {
-        sessionInfo = NewEmptySessionInfo( 0 )
+        sessionInfo = newEmptySessionInfo( 0, isTunnelServer )
     }
     return &ConnInfo{
         conn, CreateCryptCtrl( pass, count ),
@@ -511,6 +562,7 @@ func (info *pipeInfo) reconnect( txt string, rev int ) (*ConnInfo,int,bool) {
     info.mutex.Lock()
     workRev := info.rev
     workConnInfo := info.connInfo
+    sessionInfo := info.connInfo.SessionInfo
     info.mutex.Unlock()
 
     log.Printf( "reconnect -- rev: %s, %d %d", txt, rev, workRev )
@@ -535,36 +587,42 @@ func (info *pipeInfo) reconnect( txt string, rev int ) (*ConnInfo,int,bool) {
         }
         return false
     }
-    
-    for {
-        if sub() {
-            break
+
+    if info.reconnectFunc != nil {
+        for {
+            if sub() {
+                break
+            }
+
+            time.Sleep( 500 * time.Millisecond )
         }
-
-        time.Sleep( 500 * time.Millisecond )
+    } else {
+        reqConnect = true
+        info.rev++
     }
-
-
+    
     if reqConnect {
         ReleaseSessionConn( info.connInfo )
         prepareClose( info )
         
         if !info.end {
+            sessionInfo.SetState( Session_state_reconnecting )
+
             workRev = info.rev
-            workInfo := info.reconnectFunc( info.connInfo.SessionInfo )
+            workInfo := info.reconnectFunc( sessionInfo )
             if workInfo != nil {
                 info.connInfo = workInfo
                 log.Printf( "new connInfo -- %p", workInfo )
+                sessionInfo.SetState( Session_state_connected )
             } else {
                 info.end = true;
                 info.connInfo = CreateConnInfo(
-                    dummyConn, nil, 0, info.connInfo.SessionInfo )
+                    dummyConn, nil, 0, sessionInfo, sessionInfo.isTunnelServer )
                 log.Printf( "set dummyConn" )
             }
             workConnInfo = info.connInfo
             
             info.connecting = false
-
         }
     }
 
@@ -1026,6 +1084,8 @@ func startRelaySession(
 
     info, newSession := NewPipeInfo( connInfo, citServerFlag, reconnect )
 
+    connInfo.SessionInfo.SetState( Session_state_connected )
+
     if !newSession {
         log.Printf( "skip process reconnect -- %d", connInfo.SessionInfo.SessionId )
         return info
@@ -1045,7 +1105,9 @@ func startRelaySession(
                     break
                 }
             }
-            sessionInfo.packChan <- PackInfo { nil, PACKET_KIND_DUMMY, CITIID_CTRL }
+            if !info.connecting {
+                sessionInfo.packChan <- PackInfo { nil, PACKET_KIND_DUMMY, CITIID_CTRL }
+            }
         }
         log.Printf( "end keepalive -- %d", sessionInfo.SessionId )
     }
@@ -1083,6 +1145,10 @@ func relaySession( info *pipeInfo, citi *ConnInTunnelInfo, hostInfo HostInfo ) {
     log.Printf(
         "close Session: read %d, write %d",
         sessionInfo.readSize, sessionInfo.wroteSize )
+    sessionInfo.delCiti( citi )
+    log.Printf(
+        "close Session: readNo %d, writeNo %d",
+        sessionInfo.ReadNo, sessionInfo.WriteNo )
     // sessionInfo.packChan <- PackInfo { nil, PACKET_KIND_EOS, CITIID_CTRL } // pending
 }
 
@@ -1096,7 +1162,10 @@ func CreateToReconnectFunc( reconnect func( sessionInfo *SessionInfo ) (*ConnInf
             5000 * time.Millisecond,
         }
         index := 0
-        sessionId := sessionInfo.SessionId
+        sessionId := 0
+        if sessionInfo != nil {
+            sessionId = sessionInfo.SessionId
+        }
         for {
             timeout := timeList[ index ]
             log.Printf(
@@ -1180,11 +1249,12 @@ func ListenNewConnect(
 
     for {
         <-connInfo.releaseChan
-        log.Printf( "disconnected" )
         if !loop {
             break
         }
     }
+    log.Printf( "disconnected" )
+    connInfo.SessionInfo.SetState( Session_state_disconnected )
 }
 
 
@@ -1211,7 +1281,9 @@ func NewConnectFromWith(
         }
         go NewConnect( header, info )
     }
+    
     log.Printf( "disconnected" )
+    connInfo.SessionInfo.SetState( Session_state_disconnected )
 }
 
 func NewConnect( header *ConnHeader, info *pipeInfo ) {
@@ -1230,6 +1302,7 @@ func NewConnect( header *ConnHeader, info *pipeInfo ) {
     buffer.Write( bytes )
     info.connInfo.SessionInfo.packChan <- PackInfo{
         buffer.Bytes(), PACKET_KIND_NORMAL, CITIID_CTRL }
+    const Session_state_header = "respheader"
     
     if err != nil {
         return
@@ -1246,17 +1319,19 @@ func NewConnect( header *ConnHeader, info *pipeInfo ) {
 
 
 func prepareClose( info *pipeInfo ) {
-    log.Print( "prepareClose" )
-
     sessionInfo := info.connInfo.SessionInfo
+    
+    log.Printf( "prepareClose -- %s", sessionInfo.isTunnelServer )
 
-    for len( sessionInfo.ctrlInfo.waitHeaderCount ) > 0 {
-        count := len( sessionInfo.ctrlInfo.waitHeaderCount )
-        log.Print( "packetReader: put dummy header -- ", count )
-        for index := 0; index < count; index++ {
-            // connection 待ちで止まらないように ダミーを送信
-            sessionInfo.ctrlInfo.header <- nil
+    if sessionInfo.isTunnelServer {
+        for len( sessionInfo.ctrlInfo.waitHeaderCount ) > 0 {
+            count := len( sessionInfo.ctrlInfo.waitHeaderCount )
+            log.Print( "packetReader: put dummy header -- ", count )
+            for index := 0; index < count; index++ {
+                // connection 待ちで止まらないように ダミーを送信
+                sessionInfo.ctrlInfo.header <- nil
+            }
+            time.Sleep( 100 * time.Millisecond )
         }
-        time.Sleep( 100 * time.Millisecond )
     }
 }

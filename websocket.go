@@ -130,8 +130,10 @@ func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param *TunnelP
             return nil, err
         }
     }
-    connInfo := CreateConnInfo( websock, param.encPass, param.encCount, sessionInfo )
+    connInfo := CreateConnInfo(
+        websock, param.encPass, param.encCount, sessionInfo, false )
     if err := ProcessClientAuth( connInfo, param ); err != nil {
+        connInfo.SessionInfo.SetState( Session_state_authmiss )
         log.Print(err)
         websock.Close()
         return nil, err

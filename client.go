@@ -16,8 +16,10 @@ func connectTunnel( serverInfo HostInfo, param *TunnelParam, sessionInfo *Sessio
     }
     log.Print( "connected to server" )
 
-    connInfo := CreateConnInfo( tunnel, param.encPass, param.encCount, sessionInfo )
+    connInfo := CreateConnInfo(
+        tunnel, param.encPass, param.encCount, sessionInfo, false )
     if err := ProcessClientAuth( connInfo, param ); err != nil {
+        connInfo.SessionInfo.SetState( Session_state_authmiss )
         log.Print(err)
         tunnel.Close()
         return nil, err
@@ -96,20 +98,22 @@ func StartWebSocketClient( userAgent string, param *TunnelParam, serverInfo Host
 }
 
 func StartReverseWebSocketClient( userAgent string, param *TunnelParam, serverInfo HostInfo, proxyHost string ) {
-    for {
-        sessionParam := *param
-        
-        connInfo, err := ConnectWebScoket( serverInfo.toStr(), proxyHost, userAgent, &sessionParam, nil )
-        if err != nil {
-            break
-        }
+
+    sessionParam := *param
+
+    connect := CreateToReconnectFunc(
+        func( sessionInfo *SessionInfo ) (*ConnInfo, error) {
+            return ConnectWebScoket(
+                serverInfo.toStr(), proxyHost, userAgent, &sessionParam, sessionInfo )
+        })
+
+    process := func() {
+        connInfo := connect( nil )
         defer connInfo.Conn.Close()
         
-        reconnect := CreateToReconnectFunc(
-            func( sessionInfo *SessionInfo ) (*ConnInfo, error) {
-                return ConnectWebScoket(
-                    serverInfo.toStr(), proxyHost, userAgent, &sessionParam, sessionInfo )
-            })
-        NewConnectFromWith( connInfo, &sessionParam, reconnect )
+        NewConnectFromWith( connInfo, &sessionParam, connect )
+    }
+    for {
+        process()
     }
 }

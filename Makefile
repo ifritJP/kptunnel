@@ -25,6 +25,12 @@ define exebg
 	@echo '# $1' >> kill-pid-list
 endef
 
+
+kill-test:
+	-pkill -9 iperf3
+	-pkill -9 tunnel
+
+
 TEST_ENC_COUNT=0
 
 # TEST_MAIN で指定されたターゲットを make で実行する。

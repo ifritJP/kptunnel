@@ -63,6 +63,7 @@ func main() {
     interval := cmd.Int( "int", 20, "keep alive interval" )
     ctrl := cmd.String( "ctrl", "", "[bench]" )
     prof := cmd.String( "prof", "", "profile port. (:1234)" )
+    console := cmd.String( "console", "", "console port. (:1234)" )
 
     usage := func() {
         fmt.Fprintf(cmd.Output(), "\nUsage: %s [options]\n\n", os.Args[0])
@@ -136,6 +137,17 @@ func main() {
     if *prof != "" {
         go func() {
             fmt.Println(http.ListenAndServe( *prof, nil))
+        }()
+    }
+
+    if *console != "" {
+        go func() {
+            consoleHost := hostname2HostInfo( *console )
+            if consoleHost == nil {
+                fmt.Printf( "illegal host format. -- %s\n", *console )
+                usage()
+            }
+            StartConsole( *consoleHost )
         }()
     }
 

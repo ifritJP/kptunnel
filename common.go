@@ -431,6 +431,7 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
         return false, err
     }
     log.Print( "challenge ", challenge.Challenge )
+    connInfo.SessionInfo.SetState( Session_state_authchallenge )
 
     // challenge-response 処理
     reader, err := readItemWithReader( stream, connInfo.CryptCtrlObj )
@@ -460,7 +461,7 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
     newSession := false
     if sessionId == 0 {
         // sessionId が 0 なら、新規セッション
-        connInfo.SessionInfo = NewSessionInfo()
+        connInfo.SessionInfo = NewSessionInfo( true )
         sessionId = connInfo.SessionInfo.SessionId
         newSession = true
     } else {
@@ -481,6 +482,8 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
         return false, err
     }
     log.Print( "match password" )
+    connInfo.SessionInfo.SetState( Session_state_authresult )
+    
 
     // データ再送のための設定
     connInfo.SessionInfo.SetReWrite( resp.ReadNo )
@@ -608,7 +611,9 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
         stream, CITIID_CTRL, bytes, connInfo.CryptCtrlObj, nil ); err != nil {
         return err
     }
+    connInfo.SessionInfo.SetState( Session_state_authresponse )
 
+    
     {
         // AuthResult を取得する
         log.Print( "read auth result" )
@@ -648,7 +653,8 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
         if result.SessionId != connInfo.SessionInfo.SessionId {
             if connInfo.SessionInfo.SessionId == 0 {
                 // 新規接続だった場合、セッション情報を更新する
-                connInfo.SessionInfo.SessionId = result.SessionId
+                //connInfo.SessionInfo.SessionId = result.SessionId
+                connInfo.SessionInfo.UpdateSessionId( result.SessionId )
             } else {
                 return fmt.Errorf(
                     "illegal sessionId -- %d, %d",

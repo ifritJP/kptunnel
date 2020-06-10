@@ -49,9 +49,13 @@ func listenTcpServer( local net.Listener, param *TunnelParam, process func( conn
     defer ReleaseClient( remoteAddr )
     
     tunnelParam := *param
-    connInfo := CreateConnInfo( conn, tunnelParam.encPass, tunnelParam.encCount, nil )
+    connInfo := CreateConnInfo(
+        conn, tunnelParam.encPass, tunnelParam.encCount, nil, true )
     newSession := false
-    if newSession, err = ProcessServerAuth( connInfo, &tunnelParam, fmt.Sprintf( "%s", conn.RemoteAddr() ) ); err != nil {
+    if newSession, err = ProcessServerAuth(
+        connInfo, &tunnelParam, fmt.Sprintf( "%s", conn.RemoteAddr() ) ); err != nil {
+        connInfo.SessionInfo.SetState( Session_state_authmiss )
+
         log.Print( "auth error: ", err );
         time.Sleep( 3 * time.Second )
     } else {
@@ -127,8 +131,10 @@ func (handler WrapWSHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 
 func execWebSocketServer( param TunnelParam, connectSession func(conn *ConnInfo, param *TunnelParam) ) {
     handle := func( ws *websocket.Conn, remoteAddr string ) {
-        connInfo := CreateConnInfo( ws, param.encPass, param.encCount, nil )
-        if newSession, err := ProcessServerAuth( connInfo, &param, remoteAddr ); err != nil {
+        connInfo := CreateConnInfo( ws, param.encPass, param.encCount, nil, true )
+        if newSession, err := ProcessServerAuth(
+            connInfo, &param, remoteAddr ); err != nil {
+            connInfo.SessionInfo.SetState( Session_state_authmiss )
             log.Print( "auth error: ", err );
             time.Sleep( 3 * time.Second )
             return
