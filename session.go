@@ -318,6 +318,12 @@ func (info *SessionInfo) delCiti( citi *ConnInTunnelInfo ) {
 
     log.Printf(
         "delCiti -- %d %d %d", info.SessionId, citi.citiId, len( info.citiId2Info ) )
+
+    // 詰まれているデータを読み捨てる
+    log.Printf( "delCiti discard readPackChan -- %d", len( citi.readPackChan ) );
+    for len( citi.readPackChan ) > 0 {
+        <-citi.readPackChan
+    }
 }
 
 func (info *SessionInfo) hasCiti() bool {
@@ -703,7 +709,7 @@ func tunnel2Stream( sessionInfo *SessionInfo, dst *ConnInTunnelInfo, fin chan bo
         
         
         if readSize == 0 {
-            log.Print( "tunnel2Stream: read 0 end" )
+            log.Printf( "tunnel2Stream: read 0 end -- %d", len(sessionInfo.packChan) )
             break;
         }
         _, writeerr := dst.conn.Write( readBuf )
@@ -712,6 +718,9 @@ func tunnel2Stream( sessionInfo *SessionInfo, dst *ConnInTunnelInfo, fin chan bo
             break
         }
     }
+
+    // dst.readPackChan にデータが詰まれないように削除する
+    sessionInfo.delCiti( dst )
     fin <- true
 }
 
@@ -1141,14 +1150,12 @@ func relaySession( info *pipeInfo, citi *ConnInTunnelInfo, hostInfo HostInfo ) {
     <-fin
     citi.conn.Close()
     <-fin
-    sessionInfo.delCiti( citi )
     log.Printf(
-        "close Session: read %d, write %d",
-        sessionInfo.readSize, sessionInfo.wroteSize )
-    sessionInfo.delCiti( citi )
+        "close citi: sessionId %d, citiId %d, read %d, write %d",
+        sessionInfo.SessionId, citi.citiId, sessionInfo.readSize, sessionInfo.wroteSize )
     log.Printf(
-        "close Session: readNo %d, writeNo %d",
-        sessionInfo.ReadNo, sessionInfo.WriteNo )
+        "close citi: readNo %d, writeNo %d, readPackChan %d",
+        citi.ReadNo, citi.WriteNo, len( citi.readPackChan ) )
     // sessionInfo.packChan <- PackInfo { nil, PACKET_KIND_EOS, CITIID_CTRL } // pending
 }
 

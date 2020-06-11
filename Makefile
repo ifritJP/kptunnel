@@ -61,12 +61,14 @@ test-r-iperf3:
 
 # iperf3 のテストケース
 test-iperf3-main:
-	$(call exebg,./tunnel -mode ${SERVER_MODE} -server :8000 -encCount ${TEST_ENC_COUNT} ${SERVER_OP} > test-server.log 2>&1)
+	$(call exebg,./tunnel -mode ${SERVER_MODE} -server :8000 -encCount ${TEST_ENC_COUNT} ${SERVER_OP} -console :10001 > test-server.log 2>&1)
 	$(call exebg,iperf3 -s > /dev/null 2>&1)
 	sleep 1
-	$(call exebg,./tunnel -mode ${CLIENT_MODE} -encCount ${TEST_ENC_COUNT} -server :8000 ${CLIENT_OP} > test-client.log 2>&1)
+	$(call exebg,./tunnel -mode ${CLIENT_MODE} -encCount ${TEST_ENC_COUNT} -server :8000 ${CLIENT_OP} -console :10002 > test-client.log 2>&1)
 	sleep 2
 	iperf3 -c localhost -p 8001
+	sleep 1
+	iperf3 -R -c localhost -p 8001
 
 
 # wsserver を使って echo サーバのテスト
@@ -86,3 +88,14 @@ test-echo-main:
 	sleep 2
 	-telnet localhost 8001
 
+test-chisel-iperf3:
+	-@rm -f kill-pid-list
+	$(call exebg,${GOPATH}/src/github.com/jpillora/chisel/chisel server -p 8000 8001:localhost:5201 > /dev/null 2>&1)
+	$(call exebg,iperf3 -s > /dev/null 2>&1)
+	sleep 1
+	$(call exebg,${GOPATH}/src/github.com/jpillora/chisel/chisel client localhost:8000 8001:localhost:5201 > /dev/null 2>&1)
+	sleep 2
+	iperf3 -c localhost -p 8001
+	sleep 1
+	iperf3 -R -c localhost -p 8001
+	bash kill-pid-list

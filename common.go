@@ -10,6 +10,7 @@ import (
     "fmt"
     "time"
     //"net"
+    "crypto/sha512"
     "crypto/sha256"
     "encoding/base64"
 
@@ -357,6 +358,7 @@ const CTRL_BENCH = 1
 type AuthResponse struct {
     // 
     Response string
+    Hint string
     SessionId int
     WriteNo int64
     ReadNo int64
@@ -373,8 +375,8 @@ type AuthResult struct {
 
 
 
-func generateChallengeResponse( challenge string, pass *string ) string {
-    sum := sha256.Sum256([]byte( challenge + *pass ))
+func generateChallengeResponse( challenge string, pass *string, hint string ) string {
+    sum := sha512.Sum512([]byte( challenge + *pass + hint ))
 	return base64.StdEncoding.EncodeToString( sum[:] )
 }
 
@@ -442,7 +444,8 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
     if err := json.NewDecoder( reader ).Decode( &resp ); err != nil {
         return false, err
     }
-    if resp.Response != generateChallengeResponse( challenge.Challenge, param.pass ) {
+    if resp.Response != generateChallengeResponse(
+        challenge.Challenge, param.pass, resp.Hint ) {
         // challenge-response が不一致なので、認証失敗
         bytes, _ := json.Marshal( AuthResult{ "ng", 0, 0, 0 } )
         if err := WriteItem(
@@ -600,11 +603,16 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
         }
     }
 
+
+
     // response を生成
-    resp := generateChallengeResponse( challenge.Challenge, param.pass )
+    nano := time.Now().UnixNano()
+    sum := sha256.Sum256([]byte( fmt.Sprint( "%v", nano ) ))
+	hint := base64.StdEncoding.EncodeToString( sum[:] )
+    resp := generateChallengeResponse( challenge.Challenge, param.pass, hint )
     bytes, _ := json.Marshal(
         AuthResponse{
-            resp, connInfo.SessionInfo.SessionId,
+            resp, hint, connInfo.SessionInfo.SessionId,
             connInfo.SessionInfo.WriteNo,
             connInfo.SessionInfo.ReadNo, param.ctrl } )
     if err := WriteItem(
