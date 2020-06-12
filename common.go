@@ -394,27 +394,11 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
     stream := connInfo.Conn
     log.Print( "start auth" )
 
-    {
-        // proxy 経由の websocket だと、
-        // 最初のデータが欠けることがある。
-        // proxy サーバの影響か、 websocket の実装上の問題か？
-        // proxy サーバの問題な気がするが。。 
-        // WriteItem() を使うと、データ長とデータがペアで送信されるが、
-        // データが欠けることでデータ長とデータに不整合が発生し、
-        // 存在しないデータ長を読みこもうとして、タイムアウトするまで戻ってこない。
-        // そこで、最初のデータにどれだけズレがあるかを確認するための
-        // バイト列を出力する。
-        // 0x00 〜 0x09 を2回出力する。
-        bytes := make( []byte, 1 )
-        for subIndex := 0; subIndex < 2; subIndex++ {
-            for index := 0; index < 10; index++ {
-                // stream の write ごとに欠けるようなので、1 バイトづつ出力する
-                bytes[ 0 ] = byte(index)
-                if _, err := stream.Write( bytes ); err != nil {
-                    return false, err
-                }
-            }
-        }
+    if err := CorrectLackOffsetWrite( stream ); err != nil {
+        return false, err
+    }
+    if err := CorrectLackOffsetRead( stream ); err != nil {
+        return false, err
     }
 
     // 共通文字列を暗号化して送信することで、
@@ -518,6 +502,63 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
 }
 
 
+func CorrectLackOffsetWrite( stream io.Writer ) error {
+    // proxy 経由の websocket だと、
+    // 最初のデータが欠けることがある。
+    // proxy サーバの影響か、 websocket の実装上の問題か？
+    // proxy サーバの問題な気がするが。。 
+    // WriteItem() を使うと、データ長とデータがペアで送信されるが、
+    // データが欠けることでデータ長とデータに不整合が発生し、
+    // 存在しないデータ長を読みこもうとして、タイムアウトするまで戻ってこない。
+    // そこで、最初のデータにどれだけズレがあるかを確認するための
+    // バイト列を出力する。
+    // 0x00 〜 0x09 を2回出力する。
+    bytes := make( []byte, 1 )
+    for subIndex := 0; subIndex < 2; subIndex++ {
+        for index := 0; index < 10; index++ {
+            // stream の write ごとに欠けるようなので、1 バイトづつ出力する
+            bytes[ 0 ] = byte(index)
+            if _, err := stream.Write( bytes ); err != nil {
+                return err
+            }
+        }
+    }
+    return nil
+}
+
+func CorrectLackOffsetRead( stream io.Reader ) error {
+    // proxy 経由の websocket だと、
+    // 最初のデータが正常に送信されないことがある。
+    // ここで、最初のデータにどれだけズレがあるかを確認する。
+
+    // 0x00 〜 0x09 までのバイト列が 2 回あるので、
+    // 最初に 10 バイト読み込み、
+    // 読み込めた値を見てズレを確認する
+    buf := make( []byte, 10 )
+    if _, err := io.ReadFull( stream, buf ); err != nil {
+        return err
+    }
+    log.Printf( "num: %x\n", buf )
+    offset := int(buf[0])
+    log.Printf( "offset: %d\n", offset )
+    if offset >= 10 {
+        return fmt.Errorf( "illegal num -- %d", offset )
+    }
+
+    // ズレ量に応じて残りのデータを読み込む
+    if _, err := io.ReadFull( stream, buf[ :10-offset] ); err != nil {
+        return err
+    }
+    log.Printf( "num2: %x\n", buf )
+    for index := 0; index < 10 - offset; index++ {
+        if int(buf[ index ]) != offset + index {
+            return fmt.Errorf(
+                "unmatch num -- offset %d: %d != %d", offset, index, buf[ index ] )
+        }
+    }
+    return nil
+}
+
 // サーバとのネゴシエーションを行なう
 //
 // クライアントの認証に必要や手続と、再接続時のセッション情報などをやり取りする
@@ -531,37 +572,13 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
     
     stream := connInfo.Conn
 
-    {
-        // proxy 経由の websocket だと、
-        // 最初のデータが正常に送信されないことがある。
-        // ここで、最初のデータにどれだけズレがあるかを確認する。
-
-        // 0x00 〜 0x09 までのバイト列が 2 回あるので、
-        // 最初に 10 バイト読み込み、
-        // 読み込めた値を見てズレを確認する
-        buf := make( []byte, 10 )
-        if _, err := io.ReadFull( stream, buf ); err != nil {
-            return err
-        }
-        log.Printf( "num: %x\n", buf )
-        offset := int(buf[0])
-        log.Printf( "offset: %d\n", offset )
-        if offset >= 10 {
-            return fmt.Errorf( "illegal num -- %d", offset )
-        }
-
-        // ズレ量に応じて残りのデータを読み込む
-        if _, err := io.ReadFull( stream, buf[ :10-offset] ); err != nil {
-            return err
-        }
-        log.Printf( "num2: %x\n", buf )
-        for index := 0; index < 10 - offset; index++ {
-            if int(buf[ index ]) != offset + index {
-                return fmt.Errorf(
-                    "unmatch num -- offset %d: %d != %d", offset, index, buf[ index ] )
-            }
-        }
+    if err := CorrectLackOffsetRead( stream ); err != nil {
+        return err
     }
+    if err := CorrectLackOffsetWrite( stream ); err != nil {
+        return err
+    }
+    
     
     magicItem, err := readItemForNormal( stream, connInfo.CryptCtrlObj )
     if err != nil {
