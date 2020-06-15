@@ -38,6 +38,11 @@ func hostname2HostInfo( name string ) *HostInfo {
     return &HostInfo{ "", hostport[ 0 ], port, serverUrl.Path }
 }
 
+var verboseFlag = false
+func IsVerbose() bool {
+    return verboseFlag
+}
+
 func main() {
 
     if BUFSIZE >= 65536 {
@@ -64,6 +69,7 @@ func main() {
     ctrl := cmd.String( "ctrl", "", "[bench]" )
     prof := cmd.String( "prof", "", "profile port. (:1234)" )
     console := cmd.String( "console", "", "console port. (:1234)" )
+    verbose := cmd.Bool( "verbose", false, "verbose. (true or false)" )
 
     usage := func() {
         fmt.Fprintf(cmd.Output(), "\nUsage: %s [options]\n\n", os.Args[0])
@@ -80,7 +86,7 @@ func main() {
         os.Exit(0)
     }
 
-    
+    verboseFlag = *verbose
 
     if *pass == "" {
         fmt.Print( "warning: password is default. set -pass option.\n" )

@@ -54,10 +54,10 @@ test-r-ws:
 
 # wsserver を使って iperf3 のテスト
 test-iperf3:
-	$(MAKE) test-ws TEST_MAIN=test-iperf3-main REMOTE=:5201
+	$(MAKE) test-ws TEST_MAIN=test-iperf3-main REMOTE=127.0.0.1:5201
 # r-wsserver を使って iperf3 のテスト
 test-r-iperf3:
-	$(MAKE) test-r-ws TEST_MAIN=test-iperf3-main REMOTE=:5201
+	$(MAKE) test-r-ws TEST_MAIN=test-iperf3-main REMOTE=127.0.0.1:5201
 
 # iperf3 のテストケース
 test-iperf3-main:
