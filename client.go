@@ -27,8 +27,8 @@ func connectTunnel( serverInfo HostInfo, param *TunnelParam, sessionInfo *Sessio
     return connInfo, nil
 }
 
-func StartClient( param *TunnelParam, port HostInfo, hostInfo HostInfo ) {
-    listenInfo, err := NewListen( port )
+func StartClient( param *TunnelParam, forwardInfo ForwardInfo, fin chan bool ) {
+    listenInfo, err := NewListen( forwardInfo.src )
     if err != nil {
         log.Fatal( err )
     }
@@ -47,8 +47,10 @@ func StartClient( param *TunnelParam, port HostInfo, hostInfo HostInfo ) {
                 return connectTunnel( param.serverInfo, &sessionParam, nil )
             })
         ListenNewConnect(
-            listenInfo, connInfo, hostInfo, &sessionParam, true, reconnect )
+            listenInfo, connInfo, forwardInfo.dst, &sessionParam, true, reconnect )
     }
+
+    fin <- true
 }
 
 
@@ -70,16 +72,19 @@ func StartReverseClient( param *TunnelParam ) {
 }
 
 
-func StartWebSocketClient( userAgent string, param *TunnelParam, serverInfo HostInfo, proxyHost string, port HostInfo, hostInfo HostInfo ) {
+func StartWebSocketClient(
+    userAgent string, param *TunnelParam,
+    serverInfo HostInfo, proxyHost string, forwardInfo ForwardInfo, fin chan bool ) {
 
-    listenInfo, err := NewListen( port )
+    listenInfo, err := NewListen( forwardInfo.src )
     if err != nil {
         log.Fatal( err )
     }
     defer listenInfo.Close()
     
     sessionParam := *param
-    connInfo, err := ConnectWebScoket( serverInfo.toStr(), proxyHost, userAgent, &sessionParam, nil )
+    connInfo, err := ConnectWebScoket(
+        serverInfo.toStr(), proxyHost, userAgent, &sessionParam, nil )
     if err != nil {
         return
     }
@@ -91,10 +96,10 @@ func StartWebSocketClient( userAgent string, param *TunnelParam, serverInfo Host
                 serverInfo.toStr(), proxyHost, userAgent, &sessionParam, sessionInfo )
         })
 
-    ListenNewConnect( listenInfo, connInfo, hostInfo, &sessionParam, true, reconnect )
+    ListenNewConnect(
+        listenInfo, connInfo, forwardInfo.dst, &sessionParam, true, reconnect )
 
-    
-    
+    fin <- true
 }
 
 func StartReverseWebSocketClient( userAgent string, param *TunnelParam, serverInfo HostInfo, proxyHost string ) {

@@ -82,15 +82,15 @@ func StartServer(param *TunnelParam ) {
 }
 
 
-func StartReverseServer( param *TunnelParam, connectPort HostInfo, hostInfo HostInfo ) {
-    log.Print( "wating reverse --- ", param.serverInfo.toStr() )
+func StartReverseServer( param *TunnelParam, forwardInfo ForwardInfo, fin chan bool ) {
+    log.Print( "wating reverse --- ", forwardInfo.src.toStr() )
     local, err := net.Listen("tcp", param.serverInfo.toStr() )
     if err != nil {
         log.Fatal(err)
     }
     defer local.Close()
 
-    listenInfo, err := NewListen( connectPort )
+    listenInfo, err := NewListen( forwardInfo.src )
     if err != nil {
         log.Fatal( err )
     }
@@ -100,9 +100,11 @@ func StartReverseServer( param *TunnelParam, connectPort HostInfo, hostInfo Host
         go listenTcpServer( local, param,
             func ( connInfo *ConnInfo ) {
                 ListenNewConnect(
-                    listenInfo, connInfo, hostInfo, param, false, GetSessionConn )
+                    listenInfo, connInfo, forwardInfo.dst, param, false, GetSessionConn )
             } )
     }
+
+    fin <- true
 }
 
 type WrapWSHandler struct {
@@ -165,10 +167,10 @@ func StartWebsocketServer( param *TunnelParam ) {
             NewConnectFromWith( connInfo, tunnelParam, GetSessionConn ) } )
 }
 
-func StartReverseWebSocketServer( param *TunnelParam, connectPort HostInfo, hostInfo HostInfo ) {
+func StartReverseWebSocketServer( param *TunnelParam, forwardInfo ForwardInfo, fin chan bool ) {
     log.Print( "start reverse websocket -- ", param.serverInfo.toStr() )
 
-    listenInfo, err := NewListen( connectPort )
+    listenInfo, err := NewListen( forwardInfo.src )
     if err != nil {
         log.Fatal( err )
     }
@@ -178,5 +180,8 @@ func StartReverseWebSocketServer( param *TunnelParam, connectPort HostInfo, host
         *param, 
         func( connInfo *ConnInfo, tunnelParam *TunnelParam) {
             ListenNewConnect(
-                listenInfo, connInfo, hostInfo, tunnelParam, false, GetSessionConn ) } )
+                listenInfo, connInfo, forwardInfo.dst,
+                tunnelParam, false, GetSessionConn ) } )
+
+    fin <- true
 }

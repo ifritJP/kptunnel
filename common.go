@@ -46,11 +46,13 @@ type CryptMode struct {
     // 暗号化を行なう最大回数。
     // -1: 無制限
     //  0: 暗号化なし
-    //  N: 残り N 回
+    //  N: 最大暗号化回数 N 回
     countMax int
-    // 
+    // 現在の暗号化回数
     count int
+    // 作業用バッファ
     work []byte
+    // 暗号化処理
     stream cipher.Stream
 }
 type CryptCtrl struct {
@@ -90,15 +92,22 @@ func CreateCryptCtrl( pass *string, count int ) *CryptCtrl {
 
 // 暗号・複合処理
 //
-// 戻り値として変換後の値が返るが、これは CryptMode の work バッファ。
-// つまり、この変換後の値を処理する前に、連続して暗号・複合処理を行なうと、
-// 変換後のデータが上書きされる。
-func (mode *CryptMode) Process( bytes []byte ) []byte {
-    if len(bytes) > len(mode.work) {
+// @param inbuf 処理対象のデータを保持するバッファ
+// @param outbuf 処理後のデータを格納するバッファ。
+//    nil を指定した場合 CryptMode の work に結果を格納する。
+// @return 処理後のデータを格納するバッファ。
+//   outbuf に nil 以外を指定した場合、 outbuf の slice を返す。
+//   outbuf に nil を指定した場合、CryptMode の work の slice を返す。
+func (mode *CryptMode) Process( inbuf []byte, outbuf []byte ) []byte {
+    work := outbuf
+    if outbuf == nil {
+        work = mode.work
+    }
+    if len(inbuf) > len(work) {
         panic( fmt.Errorf( "over length" ) )
     }
     if mode.countMax == 0 {
-        return bytes
+        return inbuf
     }
     if mode.countMax > 0 {
         if mode.countMax > mode.count {
@@ -107,20 +116,24 @@ func (mode *CryptMode) Process( bytes []byte ) []byte {
             mode.countMax = 0
         }
     }
-    buf := mode.work[:len(bytes)]
-	mode.stream.XORKeyStream( buf, bytes )
-    return buf
+    // buf := work[:len(inbuf)]
+	// mode.stream.XORKeyStream( buf, inbuf )
+    // return buf
+
+	mode.stream.XORKeyStream( work, inbuf )
+    
+    return work[:len(inbuf)]
 }
 
 
 // 暗号化
 func (ctrl *CryptCtrl) Encrypt( bytes []byte ) []byte {
-    return ctrl.enc.Process( bytes )
+    return ctrl.enc.Process( bytes, nil )
 }
 
 // 複合化
 func (ctrl *CryptCtrl) Decrypt( bytes []byte ) []byte {
-    return ctrl.dec.Process( bytes )
+    return ctrl.dec.Process( bytes, nil )
 }       
 
 // 通常パッケット
@@ -138,6 +151,13 @@ const PACKET_KIND_PACKED = 5
 var dummyKindBuf = []byte{ PACKET_KIND_DUMMY }
 var normalKindBuf = []byte{ PACKET_KIND_NORMAL }
 var syncKindBuf = []byte{ PACKET_KIND_SYNC }
+
+var PACKET_LEN_HEADER int = 0
+
+func init() {
+    var citiId uint32
+    PACKET_LEN_HEADER = len( normalKindBuf ) + int(unsafe.Sizeof( citiId ))
+}
 
 func WriteDummy( ostream io.Writer ) error {
     if _, err := ostream.Write( dummyKindBuf ); err != nil {
@@ -157,7 +177,7 @@ func WriteSimpleKind( ostream io.Writer, kind int8, citiId uint32, buf []byte ) 
     }
     
     var buffer bytes.Buffer
-    buffer.Grow( len(kindbuf) + int(unsafe.Sizeof( citiId )) + len(buf))
+    buffer.Grow( PACKET_LEN_HEADER + len(buf))
     
     if _, err := buffer.Write( kindbuf ); err != nil {
         return err
@@ -215,7 +235,7 @@ func WriteItemDirect( ostream io.Writer, citiId uint32, buf []byte, ctrl *CryptC
         return err
     }
     if ctrl != nil {
-        buf = ctrl.enc.Process( buf )
+        buf = ctrl.enc.Process( buf, nil )
     }
     if err := binary.Write( ostream, binary.BigEndian, uint16(len( buf )) ); err != nil {
         return err
@@ -257,8 +277,26 @@ func ReadPackNo( istream io.Reader, kind int8 ) (*PackItem,error) {
     return &item, nil
 }
 
+type CitiBuf interface {
+    // citiId 向けのバッファを取得する
+	GetPacketBuf( citiId uint32, packSize uint16 ) []byte
+}
+
+type HeapCitiBuf struct {
+}
+var heapCitiBuf *HeapCitiBuf = &HeapCitiBuf{}
+func (citiBuf *HeapCitiBuf) GetPacketBuf( citiId uint32, packSize uint16 ) []byte {
+    return make([]byte,packSize)
+}
+
 // データを読み込む
-func ReadItem( istream io.Reader, ctrl *CryptCtrl, workBuf []byte ) (*PackItem,error) {
+//
+// @param istream 読み込み元ストリーム
+// @param ctrl 暗号化制御
+// @param workBuf 
+func ReadItem(
+    istream io.Reader, ctrl *CryptCtrl,
+    workBuf []byte, citiBuf CitiBuf ) (*PackItem,error) {
 
     var item PackItem
 
@@ -295,20 +333,29 @@ func ReadItem( istream io.Reader, ctrl *CryptCtrl, workBuf []byte ) (*PackItem,e
         }
         packSize := binary.BigEndian.Uint16( buf )
         var packBuf []byte
+        var citiPackBuf []byte = nil
         if workBuf == nil {
             packBuf = make([]byte,packSize)
         } else {
             if len( workBuf ) < int( packSize ) {
                 log.Fatal( "workbuf size is short -- ", len( workBuf ) )
             }
-            packBuf = workBuf[:packSize]
+            citiPackBuf = citiBuf.GetPacketBuf( item.citiId, packSize )
+            if ctrl == nil {
+                // 暗号化無しなら packBuf に citiPackBuf を直接入れる
+                packBuf = citiPackBuf
+            } else {
+                // 暗号化ありなら packBuf に workBuf を設定して、
+                // 暗号化後のバッファを citiPackBuf に設定する
+                packBuf = workBuf[:packSize]
+            }
         }
         _, error = io.ReadFull( istream, packBuf)
         if error != nil {
             return nil, error
         }
         if ctrl != nil {
-            packBuf = ctrl.dec.Process( packBuf )
+            packBuf = ctrl.dec.Process( packBuf, citiPackBuf )
         }
         item.buf = packBuf
         return &item, nil
@@ -319,7 +366,7 @@ func ReadItem( istream io.Reader, ctrl *CryptCtrl, workBuf []byte ) (*PackItem,e
 
 // データを読み込む
 func readItemForNormal( istream io.Reader, ctrl *CryptCtrl ) (*PackItem,error) {
-    item, err := ReadItem( istream, ctrl, nil )
+    item, err := ReadItem( istream, ctrl, nil, heapCitiBuf )
     if err != nil {
         return nil, err
     }
@@ -479,7 +526,8 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
         // ベンチマーク
         benchBuf := make( []byte, 100 )
         for count := 0; count < BENCH_LOOP_COUNT; count++ {
-            if _, err := ReadItem( stream, connInfo.CryptCtrlObj, benchBuf ); err != nil {
+            if _, err := ReadItem(
+                stream, connInfo.CryptCtrlObj, benchBuf, heapCitiBuf ); err != nil {
                 return false, err
             }
             if err := WriteItem(
@@ -663,7 +711,8 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
                     stream, CITIID_CTRL, benchBuf, connInfo.CryptCtrlObj, nil ); err != nil {
                     return err
                 }
-                if _,err := ReadItem( stream, connInfo.CryptCtrlObj, benchBuf ); err != nil  {
+                if _,err := ReadItem(
+                    stream, connInfo.CryptCtrlObj, benchBuf, heapCitiBuf ); err != nil  {
                     return err
                 }
             }

@@ -2,8 +2,8 @@ all:
 	@echo make build
 	@echo make build-win
 	@echo make kill-test
-	@echo make test-iperf3
-	@echo make test-r-iperf3
+	@echo make test-iperf3 [TEST_ENC_COUNT=N]
+	@echo make test-r-iperf3 [TEST_ENC_COUNT=N]
 	@echo make test-echo
 	@echo make test-r-echo
 
@@ -46,29 +46,47 @@ exec-test:
 test-ws:
 	$(MAKE) exec-test \
 		SERVER_MODE=wsserver SERVER_OP="" \
-		CLIENT_MODE=wsclient CLIENT_OP="-port 0.0.0.0:8001 -remote ${REMOTE}"
+		CLIENT_MODE=wsclient CLIENT_OP=":8001,${REMOTE}"
 test-r-ws:
 	$(MAKE) exec-test \
-		SERVER_MODE=r-wsserver SERVER_OP="-port 0.0.0.0:8001 -remote ${REMOTE}" \
+		SERVER_MODE=r-wsserver SERVER_OP=":8001,${REMOTE}" \
 		CLIENT_MODE=r-wsclient CLIENT_OP=""
 
 # wsserver を使って iperf3 のテスト
 test-iperf3:
-	$(MAKE) test-ws TEST_MAIN=test-iperf3-main REMOTE=127.0.0.1:5201
+	$(MAKE) test-ws TEST_MAIN=test-iperf3-main REMOTE=:5201
+test-iperf3-prof:
+	$(MAKE) test-ws TEST_MAIN=test-iperf3-main REMOTE=:5201 TEST_PROF=y
+
 # r-wsserver を使って iperf3 のテスト
 test-r-iperf3:
-	$(MAKE) test-r-ws TEST_MAIN=test-iperf3-main REMOTE=127.0.0.1:5201
+	$(MAKE) test-r-ws TEST_MAIN=test-iperf3-main REMOTE=:5201
+
+
+ifdef TEST_PROF
+TEST_CLIENT_OP=-prof :9000
+TEST_TIME=40
+else
+TEST_TIME=3
+endif
 
 # iperf3 のテストケース
 test-iperf3-main:
-	$(call exebg,./tunnel -mode ${SERVER_MODE} -server :8000 -encCount ${TEST_ENC_COUNT} ${SERVER_OP} -console :10001 > test-server.log 2>&1)
-	$(call exebg,iperf3 -s > /dev/null 2>&1)
+	$(call exebg,./tunnel ${SERVER_MODE} :8000 -encCount ${TEST_ENC_COUNT} ${SERVER_OP} -console :10001 > test-server.log 2>&1)
+	$(call exebg,iperf3 -s > iperf3.log 2>&1)
 	sleep 1
-	$(call exebg,./tunnel -mode ${CLIENT_MODE} -encCount ${TEST_ENC_COUNT} -server :8000 ${CLIENT_OP} -console :10002 > test-client.log 2>&1)
+	$(call exebg,./tunnel ${CLIENT_MODE} -encCount ${TEST_ENC_COUNT} :8000 ${CLIENT_OP} -console :10002 $(TEST_CLIENT_OP) > test-client.log 2>&1)
 	sleep 2
-	iperf3 -c localhost -p 8001
+ifdef TEST_PROF
+	curl --proxy '' -s http://localhost:9000/debug/pprof/profile > cpu.pprof &
+endif
+	iperf3 -c 127.0.0.1 -p 8001 -t $(TEST_TIME)
+ifdef TEST_PROF
+	go tool pprof tunnel cpu.pprof
+	exit 1
+endif
 	sleep 1
-	iperf3 -R -c localhost -p 8001
+	iperf3 -R -c 127.0.0.1 -p 8001 -t $(TEST_TIME)
 
 
 # wsserver を使って echo サーバのテスト
@@ -80,11 +98,12 @@ test-r-echo:
 
 # echo サーバを使ったテストケース
 test-echo-main:
-	$(call exebg,./tunnel -mode ${SERVER_MODE} -server :8000 \
+	$(call exebg,./tunnel ${SERVER_MODE} :8000 -verbose true \
 		-encCount ${TEST_ENC_COUNT} ${SERVER_OP} > test-server.log 2>&1)
-	$(call exebg,./tunnel -mode echo -server :10000 > /dev/null 2>&1)
+	$(call exebg,./tunnel echo :10000 > /dev/null 2>&1)
 	sleep 1
-	$(call exebg,./tunnel -mode ${CLIENT_MODE} -encCount ${TEST_ENC_COUNT} -server :8000 ${CLIENT_OP} > test-client.log 2>&1)
+	$(call exebg,./tunnel ${CLIENT_MODE} :8000 -verbose true \
+		-encCount ${TEST_ENC_COUNT} ${CLIENT_OP} > test-client.log 2>&1)
 	sleep 2
 	-telnet localhost 8001
 
@@ -95,7 +114,7 @@ test-chisel-iperf3:
 	sleep 1
 	$(call exebg,${GOPATH}/src/github.com/jpillora/chisel/chisel client localhost:8000 8001:localhost:5201 > /dev/null 2>&1)
 	sleep 2
-	iperf3 -c localhost -p 8001
+	iperf3 -c 127.0.0.1 -p 8001
 	sleep 1
-	iperf3 -R -c localhost -p 8001
+	iperf3 -R -c 127.0.0.1 -p 8001
 	bash kill-pid-list

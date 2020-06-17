@@ -2,14 +2,16 @@ package main
 
 import "flag"
 import "fmt"
-import "regexp"
 import "os"
-import "bytes"
+import "net"
+//import "bytes"
 import "strings"
 import "strconv"
 import "net/url"
 import "net/http"
 import _ "net/http/pprof"
+
+const VERSION = "0.0.1"
 
 // 2byte の MAX。
 // ここを 65535 より大きくする場合は、WriteItem, ReadItem の処理を変更する。
@@ -26,7 +28,7 @@ func hostname2HostInfo( name string ) *HostInfo {
     }
     hostport := strings.Split( serverUrl.Host, ":" )
     if len( hostport ) != 2 {
-        fmt.Printf( "illegal pattern. set 'hoge.com:1234'\n" )
+        fmt.Printf( "illegal pattern. set 'hoge.com:1234' -- %s\n", name )
         return nil
     }
     var port int
@@ -48,23 +50,81 @@ func main() {
     if BUFSIZE >= 65536 {
         fmt.Printf( "BUFSIZE is illegal. -- ", 65536 )
     }
-    
+
     var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-    mode := cmd.String( "mode", "",
-        "<server|r-server|wsserver|r-wsserver|client|r-client|wsclient|r-wsclient>" )
-    server := cmd.String( "server", "", "server (hoge.com:1234 or :1234)" )
-    remote := cmd.String( "remote", "", "remote host (hoge.com:1234)" )
+
+	version := cmd.Bool("version", false, "display the version")
+	help := cmd.Bool("help", false, "display help message")
+	cmd.Usage = func() {
+        fmt.Fprintf(cmd.Output(), "\nUsage: %s <mode [-help]>\n\n", os.Args[0])
+        fmt.Fprintf(cmd.Output(), " mode: \n" )
+        fmt.Fprintf(cmd.Output(), "    server\n" )
+        fmt.Fprintf(cmd.Output(), "    r-server\n" )
+        fmt.Fprintf(cmd.Output(), "    wsserver\n" )
+        fmt.Fprintf(cmd.Output(), "    r-wsserver\n" )
+        fmt.Fprintf(cmd.Output(), "    client\n" )
+        fmt.Fprintf(cmd.Output(), "    r-client\n" )
+        fmt.Fprintf(cmd.Output(), "    wsclient\n" )
+        fmt.Fprintf(cmd.Output(), "    r-wsclient\n" )
+        os.Exit( 1 )
+    }
+	cmd.Parse( os.Args[1:] )
+
+    if *version {
+        fmt.Printf( "version: %s\n", VERSION )
+        os.Exit( 0 )
+    }
+    if *help {
+        cmd.Usage()
+        os.Exit( 0 )
+    }
+    if len( cmd.Args() ) > 0 {
+        switch mode := cmd.Args()[0]; mode {
+        case "server":
+            ParseOptServer( mode, cmd.Args()[1:] )
+        case "r-server":
+            ParseOptServer( mode, cmd.Args()[1:] )
+        case "wsserver":
+            ParseOptServer( mode, cmd.Args()[1:] )
+        case "r-wsserver":
+            ParseOptServer( mode, cmd.Args()[1:] )
+        case "client":
+            ParseOptClient( mode, cmd.Args()[1:] )
+        case "r-client":
+            ParseOptClient( mode, cmd.Args()[1:] )
+        case "wsclient":
+            ParseOptClient( mode, cmd.Args()[1:] )
+        case "r-wsclient":
+            ParseOptClient( mode, cmd.Args()[1:] )
+        case "echo":
+            ParseOptEcho( mode, cmd.Args()[1:] )
+        case "test":
+            test()
+        }
+        os.Exit( 0 )
+    }
+    cmd.Usage()
+    os.Exit( 1 )
+}
+
+func ParseOpt(
+    cmd *flag.FlagSet, mode string, args []string ) (*TunnelParam, []ForwardInfo) {
+
+    needForward := false
+    if mode == "r-server" || mode == "r-wsserver" ||
+        mode == "client" || mode == "wsclient" {
+        needForward = true
+    }
+
+    
     pass := cmd.String( "pass", "", "password" )
     encPass := cmd.String( "encPass", "", "packet encrypt pass" )
-    encCount := cmd.Int( "encCount", 1000,
+    encCount := cmd.Int( "encCount", -1,
         `number to encrypt the tunnel packet.
  -1: infinity
   0: plain
   N: packet count` )
-    ipPattern := cmd.String( "ip", "", "allow ip pattern" )
-    proxyHost := cmd.String( "proxy", "", "proxy server" )
-    userAgent := cmd.String( "UA", "Go Http Client", "user agent for websocket" )
-    sessionPort := cmd.String( "port", "", "session port. (0.0.0.0:1234 or localhost:1234)" )
+    ipPattern := cmd.String( "ip", "", "allow ip range (192.168.0.1/24)" )
     interval := cmd.Int( "int", 20, "keep alive interval" )
     ctrl := cmd.String( "ctrl", "", "[bench]" )
     prof := cmd.String( "prof", "", "profile port. (:1234)" )
@@ -72,18 +132,64 @@ func main() {
     verbose := cmd.Bool( "verbose", false, "verbose. (true or false)" )
 
     usage := func() {
-        fmt.Fprintf(cmd.Output(), "\nUsage: %s [options]\n\n", os.Args[0])
+        fmt.Fprintf(cmd.Output(), "\nUsage: %s %s <server> ", os.Args[0], mode )
+        if needForward {
+            fmt.Fprintf(cmd.Output(), "<forward> " )
+        } else {
+            fmt.Fprintf(cmd.Output(), "[forward] " )
+        }
+        fmt.Fprintf(cmd.Output(), "[option] \n\n" )
+        fmt.Fprintf(cmd.Output(), "   server: e.g. localhost:1234 or :1234\n" )
+        fmt.Fprintf(cmd.Output(), "   forward: listen-port,target-port  e.g. :1234,hoge.com:5678\n" )
+        fmt.Fprintf(cmd.Output(), "\n" )
         fmt.Fprintf(cmd.Output(), " options:\n" )
         cmd.PrintDefaults()
         os.Exit( 1 )
     }
     cmd.Usage = usage
 
-    cmd.Parse( os.Args[1:] )
+    cmd.Parse( args )
 
-    if *mode == "test" {
-        test()
-        os.Exit(0)
+    nonFlagArgs := []string{}
+    for len( cmd.Args() ) != 0 {
+        workArgs := cmd.Args()
+
+        findOp := false
+        for index, arg := range( workArgs ) {
+            if strings.Index( arg, "-" ) == 0 {
+                cmd.Parse( workArgs[ index: ] )
+                findOp = true
+                break
+            } else {
+                nonFlagArgs = append( nonFlagArgs, arg )
+            }
+        }
+        if !findOp {
+            break
+        }
+    }
+    if len( nonFlagArgs ) < 1 {
+        usage()
+    }
+    
+    serverInfo := hostname2HostInfo( nonFlagArgs[ 0 ] )
+    if serverInfo == nil {
+        fmt.Print( "set -server option!\n" )
+        usage()
+    }
+
+
+
+    
+
+    var maskIP *MaskIP = nil
+    if *ipPattern != "" {
+        var err error
+        maskIP, err = ippattern2MaskIP( *ipPattern )
+        if err != nil {
+            fmt.Println( err )
+            usage()
+        }
     }
 
     verboseFlag = *verbose
@@ -95,46 +201,14 @@ func main() {
         fmt.Print( "warning: encrypt password is default. set -encPass option.\n" )
     }
     magic := []byte( *pass + *encPass )
-   
-    
-    var remoteInfo *HostInfo
-    if *remote != "" {
-        remoteInfo = hostname2HostInfo( *remote )
-    }
-    
-    serverInfo := hostname2HostInfo( *server )
-    if serverInfo == nil {
-        fmt.Print( "set -server option!\n" )
-        usage()
-    }
-
-    var sessionHostInfo *HostInfo
-    if *mode == "r-server" || *mode == "r-wsserver" ||
-        *mode == "client" || *mode == "wsclient" {
-        if *sessionPort == "" {
-            fmt.Print( "set -port option!\n" )
-            usage()
-        } else {
-            sessionHostInfo = hostname2HostInfo( *sessionPort )
-        }
-        if remoteInfo == nil {
-            fmt.Print( "set -remote option!\n" )
-            usage()
-        }
-    }
 
     if *interval < 2 {
         fmt.Print( "'interval' is less than 2. force set 2." )
         *interval = 2
     }
     
-    websocketServerInfo := HostInfo{ "ws://", serverInfo.Name, serverInfo.Port, "/" }
-    var pattern *regexp.Regexp
-    if *ipPattern != "" {
-        pattern = regexp.MustCompile( *ipPattern )
-    }
-    param := &TunnelParam{
-        pass, *mode, pattern, encPass, *encCount,*interval * 1000,
+    param := TunnelParam{
+        pass, mode, maskIP, encPass, *encCount,*interval * 1000,
         getKey( magic ), 0, *serverInfo }
     if *ctrl == "bench" {
         param.ctrl = CTRL_BENCH
@@ -156,33 +230,108 @@ func main() {
             StartConsole( *consoleHost )
         }()
     }
+    
 
-    switch *mode {
+    forwardList := []ForwardInfo{}
+    if mode == "r-server" || mode == "r-wsserver" ||
+        mode == "client" || mode == "wsclient" {
+        for _, arg := range( nonFlagArgs[1:] ) {
+            tokenList := strings.Split( arg, "," )
+            if len( tokenList ) != 2 {
+                fmt.Printf( "illegal forward. need ',' -- %s", arg )
+                usage()
+            }
+            remoteInfo := hostname2HostInfo( tokenList[1] )
+            if remoteInfo == nil {
+                fmt.Printf( "illegal forward. -- %s", arg )
+                usage()
+            }
+            srcInfo := hostname2HostInfo( tokenList[0] )
+            if srcInfo == nil {
+                fmt.Printf( "illegal forward. -- %s", arg )
+                usage()
+            }
+            forwardList = append(
+                forwardList, ForwardInfo{ src: *srcInfo, dst: *remoteInfo } )
+        }
+        if len( forwardList ) == 0 {
+            fmt.Print( "set forward!" )
+            usage()
+        }
+    }
+
+    return &param, forwardList
+}
+
+func ParseOptServer( mode string, args []string ) {
+    var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+    param, forwardList := ParseOpt( cmd, mode, args )
+
+    fin := make(chan bool)
+    
+    switch mode {
     case "server":
         StartServer( param )
     case "r-server":
-        StartReverseServer( param, *sessionHostInfo, *remoteInfo )
+        for _, forwardInfo := range( forwardList ) {
+            go StartReverseServer( param, forwardInfo, fin )
+        }
     case "wsserver":
         StartWebsocketServer( param )
     case "r-wsserver":
-        StartReverseWebSocketServer( param, *sessionHostInfo, *remoteInfo )
-    case "client":
-        StartClient( param, *sessionHostInfo, *remoteInfo )
-    case "r-client":
-        StartReverseClient( param )
-    case "wsclient":
-        StartWebSocketClient( *userAgent, param, websocketServerInfo, *proxyHost, *sessionHostInfo, *remoteInfo )
-    case "r-wsclient":
-        StartReverseWebSocketClient( *userAgent, param, websocketServerInfo, *proxyHost )
-    case "echo":
-        StartEchoServer( *serverInfo )
+        for _, forwardInfo := range( forwardList ) {
+            go StartReverseWebSocketServer( param, forwardInfo, fin )
+        }
+    }
+
+    for index := 0; index < len( forwardList ); index++ {
+        <-fin
     }
 }
 
+func ParseOptClient( mode string, args []string ) {
+    var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+    userAgent := cmd.String( "UA", "Go Http Client", "user agent for websocket" )
+    proxyHost := cmd.String( "proxy", "", "proxy server" )
+    
+    param, forwardList := ParseOpt( cmd, mode, args )
+    
+    websocketServerInfo := HostInfo{
+        "ws://", param.serverInfo.Name, param.serverInfo.Port, "/" }
+
+    fin := make(chan bool)
+    switch mode {
+    case "client":
+        for _, forwardInfo := range( forwardList ) {
+            go StartClient( param, forwardInfo, fin )
+        }
+    case "r-client":
+        StartReverseClient( param )
+    case "wsclient":
+        for _, forwardInfo := range( forwardList ) {
+            go StartWebSocketClient(
+                *userAgent, param, websocketServerInfo, *proxyHost, forwardInfo, fin )
+        }
+    case "r-wsclient":
+        StartReverseWebSocketClient( *userAgent, param, websocketServerInfo, *proxyHost )
+    }
+
+    for index := 0; index < len( forwardList ); index++ {
+        <-fin
+    }
+}
+
+func ParseOptEcho( mode string, args []string ) {
+    var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+    param, _ := ParseOpt( cmd, mode, args )
+
+    StartEchoServer( param.serverInfo )
+}
+
+
 func test() {
-    var buf bytes.Buffer
-    buf.Grow( 100 )
-    fmt.Printf( "%d\n", buf.Cap() )
-    buf.Reset()
-    fmt.Printf( "%d\n", buf.Cap() )
+    addr := net.ParseIP( "192.168.0.1" )
+    mask := net.CIDRMask( 20, 32 )
+    fmt.Printf( "%s, %s\n", addr.String(),
+        addr.Mask( mask ).Equal( net.ParseIP( "192.168.0.0" ) ) )
 }

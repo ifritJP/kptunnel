@@ -9,11 +9,19 @@ import (
 	"io"
 	"log"
 	"net"
-    "regexp"
+    //"regexp"
     "time"
     "sync"
     "bytes"
 )
+
+// tunnel 上に通す tcp の組み合わせ
+type ForwardInfo struct {
+    // listen する host:port
+    src HostInfo
+    // forward する相手の host:port
+    dst HostInfo
+}
 
 // tunnel の制御パラメータ
 type TunnelParam struct {
@@ -23,7 +31,7 @@ type TunnelParam struct {
     Mode string
     // 接続可能な IP パターン。
     // nil の場合、 IP 制限しない。
-    ipPattern *regexp.Regexp
+    maskedIP *MaskIP
     // セッションの通信を暗号化するパスワード
     encPass *string
     // セッションの通信を暗号化する通信数。
@@ -56,6 +64,8 @@ const CITIID_USR = 1
 const CTRL_HEADER = 0
 const CTRL_RESP_HEADER = 1
 
+
+const PRE_ENC = false
 
 
 type DummyConn struct {
@@ -94,6 +104,10 @@ func (ringBuf *RingBuf) getNext() []byte {
     return buf
 }
 
+func (ringBuf *RingBuf) getCur() []byte {
+    return ringBuf.ring.Value.([]byte)
+}
+
 
 type ConnHeader struct {
     HostInfo HostInfo
@@ -130,6 +144,8 @@ type ConnInTunnelInfo struct {
     ReadNo int64
     // このセッションで write したパケットの数
     WriteNo int64
+    ReadSize int64
+    WriteSize int64
 
     respHeader chan *CtrlRespHeader
 
@@ -162,6 +178,7 @@ type SessionInfo struct {
 
     // packet 書き込み用 channel
     packChan chan PackInfo
+    packChanEnc chan PackInfo
     
     // pipe から読み取ったサイズ
     readSize int64
@@ -190,8 +207,25 @@ type SessionInfo struct {
 
     isTunnelServer bool
 
+    ringBufEnc *RingBuf
+    encSyncChan chan bool
+
     packetWriterWaitTime time.Duration
 }
+
+func (sessionInfo *SessionInfo) GetPacketBuf( citiId uint32, packSize uint16 ) []byte {
+    if citiId >= CITIID_USR {
+        if citi := sessionInfo.getCiti( citiId ); citi != nil {
+            buf := citi.ringBufR.getCur()
+            if len( buf ) < int(packSize) {
+                log.Fatal( "illegal packet size -- ", len( buf ) )
+            }
+            return buf[:packSize]
+        }
+    }
+    return make([]byte,packSize)
+}
+
 
 func (sessionInfo *SessionInfo) SetState(state string) {
     sessionInfo.state = state
@@ -199,24 +233,38 @@ func (sessionInfo *SessionInfo) SetState(state string) {
 
 func (sessionInfo *SessionInfo) Setup() {
     for count := uint32(0); count < CITIID_USR; count++ {
-        sessionInfo.citiId2Info[ count ] =
-            &ConnInTunnelInfo{
-                nil, count, make(chan []byte), false,
-                make(chan int64, PACKET_NUM_DIV ),
-                nil, nil, 0, 0, make(chan *CtrlRespHeader), 0, 0, WaitTimeInfo{} }
+        sessionInfo.citiId2Info[ count ] = NewConnInTunnelInfo( nil, count );
     }
 
     sessionInfo.ctrlInfo.waitHeaderCount = make(chan int,100)
     sessionInfo.ctrlInfo.header = make(chan *ConnHeader,1)
     //sessionInfo.ctrlInfo.respHeader = make(chan *CtrlRespHeader,1)
 
+    for count := 0; count < PACKET_NUM_DIV; count++ {
+        sessionInfo.encSyncChan <- true
+    }
 }
 
 func newEmptySessionInfo( sessionId int, isTunnelServer bool ) *SessionInfo {
     sessionInfo := &SessionInfo{
-        sessionId, make(chan PackInfo, PACKET_NUM ), 0, 0,
-        map[uint32] *ConnInTunnelInfo{}, CITIID_USR, 0, 0,
-        new( list.List ), -1, CtrlInfo{}, "None", isTunnelServer, 0 }
+        SessionId: sessionId,
+        packChan: make(chan PackInfo, PACKET_NUM ),
+        packChanEnc: make(chan PackInfo, PACKET_NUM ),
+        readSize: 0, 
+        wroteSize: 0,
+        citiId2Info: map[uint32] *ConnInTunnelInfo{},
+        nextCtitId: CITIID_USR,
+        ReadNo: 0,
+        WriteNo: 0,
+        WritePackList: new( list.List ),
+        ReWriteNo: -1,
+        ctrlInfo: CtrlInfo{},
+        state: "None",
+        isTunnelServer: isTunnelServer,
+        ringBufEnc: NewRingBuf( PACKET_NUM, BUFSIZE ),
+        encSyncChan: make( chan bool, PACKET_NUM_DIV ),
+        packetWriterWaitTime: 0,
+    }
 
     sessionInfo.Setup()
     return sessionInfo
@@ -233,6 +281,8 @@ func DumpSession( stream io.Writer ) {
             stream, "WriteNo, ReadNo: %d %d\n",
             sessionInfo.WriteNo, sessionInfo.ReadNo )
         fmt.Fprintf( stream, "packChan: %d\n", len( sessionInfo.packChan ) )
+        fmt.Fprintf( stream, "packChanEnc: %d\n", len( sessionInfo.packChanEnc ) )
+        fmt.Fprintf( stream, "encSyncChan: %d\n", len( sessionInfo.encSyncChan ) )
         fmt.Fprintf(
             stream, "writeSize, ReadSize: %d, %d\n",
             sessionInfo.wroteSize, sessionInfo.readSize )
@@ -250,7 +300,7 @@ func DumpSession( stream io.Writer ) {
         }
 
 
-        fmt.Fprintf( stream, "------------\n")
+        fmt.Fprintf( stream, "------------\n");
     }
 }
 
@@ -278,11 +328,22 @@ func (sessionInfo *SessionInfo) UpdateSessionId(sessionId int) {
 
 func NewConnInTunnelInfo( conn io.ReadWriteCloser, citiId uint32 ) *ConnInTunnelInfo {
     citi := &ConnInTunnelInfo{
-        conn, citiId, make(chan []byte,PACKET_NUM), false,
-        make(chan int64, PACKET_NUM_DIV ),
-        NewRingBuf( PACKET_NUM, BUFSIZE ), NewRingBuf( PACKET_NUM, BUFSIZE ),
-        0, 0, make(chan *CtrlRespHeader), 0, 0, WaitTimeInfo{} }
-
+        conn: conn,
+        citiId: citiId,
+        readPackChan: make(chan []byte,PACKET_NUM),
+        end: false,
+        syncChan: make(chan int64, PACKET_NUM_DIV ),
+        ringBufW: NewRingBuf( PACKET_NUM, BUFSIZE ),
+        ringBufR: NewRingBuf( PACKET_NUM, BUFSIZE ),
+        ReadNo: 0,
+        WriteNo: 0,
+        ReadSize: 0,
+        WriteSize: 0,
+        respHeader: make(chan *CtrlRespHeader),
+        ReadState: 0,
+        WriteState: 0,
+        waitTimeInfo: WaitTimeInfo{},
+    }
     for count := 0; count < PACKET_NUM_DIV; count++ {
         citi.syncChan <- 0
     }
@@ -515,6 +576,9 @@ func (sessionInfo *SessionInfo ) postWriteData(citiId uint32, bytes []byte) {
     if list.Len() > PACKET_NUM {
         list.Remove( list.Front() )
     }
+    if ( sessionInfo.WriteNo % PACKET_NUM_BASE ) == PACKET_NUM_BASE - 1 {
+        sessionInfo.encSyncChan<-true
+    }
     sessionInfo.WriteNo++
     sessionInfo.wroteSize += int64(len( bytes ))
 }
@@ -527,17 +591,29 @@ func (sessionInfo *SessionInfo ) postWriteData(citiId uint32, bytes []byte) {
 // @param bytes 書き込みデータ
 // @return error 失敗した場合 error
 func (info *ConnInfo) writeData( stream io.Writer, citiId uint32, bytes []byte ) error {
-    if err := WriteItem(
-        stream, citiId, bytes, info.CryptCtrlObj, &info.writeBuffer ); err != nil {
-        return err
+    if !PRE_ENC {
+        if err := WriteItem(
+            stream, citiId, bytes, info.CryptCtrlObj, &info.writeBuffer ); err != nil {
+            return err
+        }
+    } else {
+        if err := WriteItem( stream, citiId, bytes, nil, &info.writeBuffer ); err != nil {
+            return err
+        }
     }
     info.SessionInfo.postWriteData( citiId, bytes )
     return nil
 }
 
 func (info *ConnInfo) writeDataDirect( stream io.Writer, citiId uint32, bytes []byte ) error {
-    if err := WriteItemDirect( stream, citiId, bytes, info.CryptCtrlObj ); err != nil {
-        return err
+    if !PRE_ENC {
+        if err := WriteItemDirect( stream, citiId, bytes, info.CryptCtrlObj ); err != nil {
+            return err
+        }
+    } else {
+        if err := WriteItemDirect( stream, citiId, bytes, nil ); err != nil {
+            return err
+        }
     }
     info.SessionInfo.postWriteData( citiId, bytes )
     return nil
@@ -548,14 +624,14 @@ func (info *ConnInfo) writeDataDirect( stream io.Writer, citiId uint32, bytes []
 // コネクションからのデータ読み込み
 //
 // @param info コネクション
-// @param bytes 書き込みデータ
+// @param work 作業用バッファ
 // @return error 失敗した場合 error
-func (info *ConnInfo) readData( bytes []byte ) (*PackItem, error) {
+func (info *ConnInfo) readData( work []byte ) (*PackItem, error) {
     var item *PackItem
     var err error
     
     for {
-        item, err = ReadItem( info.Conn, info.CryptCtrlObj, bytes )
+        item, err = ReadItem( info.Conn, info.CryptCtrlObj, work, info.SessionInfo )
         if err != nil {
             return nil, err
         }
@@ -724,6 +800,7 @@ func tunnel2Stream( sessionInfo *SessionInfo, dst *ConnInTunnelInfo, fin chan bo
         readBuf := <-dst.readPackChan
         dst.ReadState = 20;
         span := time.Now().Sub( prev )
+        dst.waitTimeInfo.tunnel2Stream += span
         if IsVerbose() && span > 5 * time.Millisecond {
             log.Printf( "tunnel2Stream -- %d, %s", dst.ReadNo, span )
         }
@@ -737,6 +814,7 @@ func tunnel2Stream( sessionInfo *SessionInfo, dst *ConnInTunnelInfo, fin chan bo
             sessionInfo.packChan <- PackInfo{ buffer.Bytes(), PACKET_KIND_SYNC, dst.citiId }
         }
         dst.ReadNo++
+        dst.ReadSize += int64(len( readBuf ))
         
         
         if readSize == 0 {
@@ -834,10 +912,13 @@ func stream2Tunnel( src *ConnInTunnelInfo, info *pipeInfo, fin chan bool ) {
         }
         src.WriteNo++
         
+        
         // バッファの切り替え
         buf := src.ringBufW.getNext()
 
-        readSize, readerr := src.conn.Read( buf )
+        var readSize int
+        var readerr error
+        readSize, readerr = src.conn.Read( buf )
         if readerr != nil {
             log.Printf( "read err log: writeNo=%d, err=%s", sessionInfo.WriteNo, readerr )
             // 入力元が切れたら、転送先に 0 バイトデータを書き込む
@@ -848,6 +929,8 @@ func stream2Tunnel( src *ConnInTunnelInfo, info *pipeInfo, fin chan bool ) {
             log.Print( "ignore 0 size packet." )
             continue
         }
+        src.WriteSize += int64(readSize)
+
         packChan <- PackInfo{ buf[:readSize], PACKET_KIND_NORMAL, src.citiId }
     }
     fin <- true
@@ -933,10 +1016,11 @@ func packetReader( info *pipeInfo ) {
                         // 上書きされてしまう。
                         // それを防ぐため copy する。
 
-                        // cloneBuf := make([]byte,len(packet.buf))
-                        cloneBuf := citi.ringBufR.getNext()[:len(packet.buf)]
-                        copy( cloneBuf, packet.buf )
-
+                        // cloneBuf := citi.ringBufR.getNext()[:len(packet.buf)]
+                        // copy( cloneBuf, packet.buf )
+                        citi.ringBufR.getNext()
+                        cloneBuf := packet.buf
+                        
                         prev := time.Now()
                         citi.readPackChan <- cloneBuf
                         span := time.Now().Sub( prev )
@@ -946,7 +1030,7 @@ func packetReader( info *pipeInfo ) {
                                 "packetReader -- %s %s %d",
                                 span, citi.waitTimeInfo.packetReader, citi.ReadNo );
                         }
-                        
+
                         readSize = len( cloneBuf )
                     } else {
                         log.Printf( "packetReader discard -- %d", packet.citiId )
@@ -1020,6 +1104,43 @@ func packetWriterSub(
     }
 }
 
+func packetEncrypter( info *pipeInfo ) {
+    packChan := info.connInfo.SessionInfo.packChan
+
+    ringBufEnc := info.connInfo.SessionInfo.ringBufEnc
+    encSyncChan := info.connInfo.SessionInfo.encSyncChan
+
+    encNo := uint64(0)
+    for {
+        packet := <-packChan
+
+        switch packet.kind {
+        case PACKET_KIND_NORMAL:
+            if ( encNo % PACKET_NUM_BASE ) == 0 {
+                <- encSyncChan
+            }
+            encNo++
+        }
+        
+
+        if PRE_ENC {
+            switch packet.kind {
+            case PACKET_KIND_NORMAL:
+                buf := ringBufEnc.getNext()
+                // buf := make([]byte,BUFSIZE)
+                
+                if info.connInfo.CryptCtrlObj != nil {
+                    packet.bytes = info.connInfo.CryptCtrlObj.enc.Process(
+                        packet.bytes, buf )
+                }
+            }
+        }
+
+        info.connInfo.SessionInfo.packChanEnc <- packet
+    }
+}
+
+
 // Tunnel へのパケット書き込み関数
 //
 // go routine で実行される
@@ -1029,7 +1150,7 @@ func packetWriterSub(
 func packetWriter( info *pipeInfo ) {
 
     sessionInfo := info.connInfo.SessionInfo
-    packChan := sessionInfo.packChan
+    packChan := sessionInfo.packChanEnc
 
 
     writePack := func( packet *PackInfo, stream io.Writer, connInfo *ConnInfo ) (bool, error) {
@@ -1164,6 +1285,7 @@ func startRelaySession(
 
     go packetWriter( info )
     go packetReader( info )
+    go packetEncrypter( info )
 
     sessionInfo := connInfo.SessionInfo
     
@@ -1214,7 +1336,7 @@ func relaySession( info *pipeInfo, citi *ConnInTunnelInfo, hostInfo HostInfo ) {
     <-fin
     log.Printf(
         "close citi: sessionId %d, citiId %d, read %d, write %d",
-        sessionInfo.SessionId, citi.citiId, sessionInfo.readSize, sessionInfo.wroteSize )
+        sessionInfo.SessionId, citi.citiId, citi.ReadSize, citi.WriteSize )
     log.Printf(
         "close citi: readNo %d, writeNo %d, readPackChan %d",
         citi.ReadNo, citi.WriteNo, len( citi.readPackChan ) )
@@ -1253,6 +1375,7 @@ func CreateToReconnectFunc( reconnect func( sessionInfo *SessionInfo ) (*ConnInf
                 log.Print( "reconnect -- ok session: ", sessionId )
                 return connInfo
             }
+            log.Printf( "reconnecting error -- %s\n", err )
             time.Sleep( timeout )
             if index < len( timeList ) - 1 {
                 index++
@@ -1267,6 +1390,7 @@ type ListenInfo struct {
 }
 
 func NewListen( port HostInfo ) (*ListenInfo, error) {
+
     local, err := net.Listen("tcp", port.toStr() )
     if err != nil {
         log.Print(err)
@@ -1282,13 +1406,16 @@ func (info *ListenInfo) Close() {
 func ListenNewConnectSub(
     listenInfo *ListenInfo, info *pipeInfo, hostInfo HostInfo ) {
 
-    for {
+    process := func() {
         log.Printf( "wating with %s\n", listenInfo.port.toStr() )
         src, err := listenInfo.listener.Accept()
         if err != nil {
             log.Fatal(err)
         }
-        log.Print( "ListenNewConnectSub -- %s", src )
+        needClose := true
+        defer func() { if needClose { src.Close() } }()
+        
+        log.Printf( "ListenNewConnectSub -- %s", src )
         
         citi := info.connInfo.SessionInfo.addCiti( src, CITIID_CTRL )
 
@@ -1297,15 +1424,21 @@ func ListenNewConnectSub(
         buffer.Write( []byte{ CTRL_HEADER } )
         bytes, _ := json.Marshal( &ConnHeader{ hostInfo, citi.citiId } )
         buffer.Write( bytes )
+        
         connInfo.SessionInfo.packChan <- PackInfo{
             buffer.Bytes(), PACKET_KIND_NORMAL, CITIID_CTRL }
 
         respHeader := <-citi.respHeader
         if respHeader.Result {
             go relaySession( info, citi, hostInfo )
+            needClose = false
         } else {
             log.Printf( "failed to connect -- %s:%s", hostInfo.toStr(), respHeader.Mess )
         }
+    }
+    
+    for {
+        process()
     }
 }
 
@@ -1371,18 +1504,22 @@ func NewConnect( header *ConnHeader, info *pipeInfo ) {
     dst, err := net.Dial("tcp", dstAddr )
     log.Print( "NewConnect -- %s", dst )
 
-    citi := info.connInfo.SessionInfo.addCiti( dst, header.CitiId )
+    sessionInfo := info.connInfo.SessionInfo
+
+    citi := sessionInfo.addCiti( dst, header.CitiId )
     
     var buffer bytes.Buffer
     buffer.Write( []byte{ CTRL_RESP_HEADER } )
     resp := CtrlRespHeader{ err == nil, fmt.Sprint( err ), header.CitiId }
     bytes, _ := json.Marshal( &resp )
     buffer.Write( bytes )
-    info.connInfo.SessionInfo.packChan <- PackInfo{
+
+    sessionInfo.packChan <- PackInfo{
         buffer.Bytes(), PACKET_KIND_NORMAL, CITIID_CTRL }
     const Session_state_header = "respheader"
     
     if err != nil {
+        log.Print( "fained to connected to ", dstAddr )
         return
     }
     defer dst.Close()
