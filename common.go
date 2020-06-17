@@ -418,6 +418,7 @@ type AuthResult struct {
     SessionId int
     WriteNo int64
     ReadNo int64
+    ForwardList []ForwardInfo
 }
 
 
@@ -436,7 +437,9 @@ func generateChallengeResponse( challenge string, pass *string, hint string ) st
 // @param remoteAddr 接続元のアドレス
 // @return bool 新しい session の場合 true
 // @return error
-func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr string ) (bool, error) {
+func ProcessServerAuth(
+    connInfo *ConnInfo, param * TunnelParam,
+    remoteAddr string, forwardList []ForwardInfo ) (bool, error) {
 
     stream := connInfo.Conn
     log.Print( "start auth" )
@@ -478,7 +481,7 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
     if resp.Response != generateChallengeResponse(
         challenge.Challenge, param.pass, resp.Hint ) {
         // challenge-response が不一致なので、認証失敗
-        bytes, _ := json.Marshal( AuthResult{ "ng", 0, 0, 0 } )
+        bytes, _ := json.Marshal( AuthResult{ "ng", 0, 0, 0, nil } )
         if err := WriteItem(
             stream, CITIID_CTRL, bytes, connInfo.CryptCtrlObj, nil ); err != nil {
             return false, err
@@ -510,7 +513,8 @@ func ProcessServerAuth( connInfo *ConnInfo, param * TunnelParam, remoteAddr stri
     bytes, _ = json.Marshal(
         AuthResult{
             "ok", sessionId,
-            connInfo.SessionInfo.WriteNo, connInfo.SessionInfo.ReadNo } )
+            connInfo.SessionInfo.WriteNo, connInfo.SessionInfo.ReadNo, forwardList } )
+    log.Printf( "forwardList -- %s", forwardList )
     if err := WriteItem(
         stream, CITIID_CTRL, bytes, connInfo.CryptCtrlObj, nil ); err != nil {
         return false, err
@@ -614,26 +618,28 @@ func CorrectLackOffsetRead( stream io.Reader ) error {
 // @param connInfo コネクション。再接続時はセッション情報をセットしておく。
 // @param param TunnelParam
 // @return error
-func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
+func ProcessClientAuth(
+    connInfo *ConnInfo, param *TunnelParam,
+    forwardList []ForwardInfo ) ([]ForwardInfo,error) {
 
     log.Print( "start auth" )
     
     stream := connInfo.Conn
 
     if err := CorrectLackOffsetRead( stream ); err != nil {
-        return err
+        return nil, err
     }
     if err := CorrectLackOffsetWrite( stream ); err != nil {
-        return err
+        return nil, err
     }
     
     
     magicItem, err := readItemForNormal( stream, connInfo.CryptCtrlObj )
     if err != nil {
-        return err
+        return nil, err
     }
     if !bytes.Equal( magicItem.buf, []byte(param.magic) ) {
-        return fmt.Errorf( "unmatch MAGIC %x", magicItem.buf )
+        return nil, fmt.Errorf( "unmatch MAGIC %x", magicItem.buf )
     }
 
     // challenge を読み込み、認証用パスワードから response を生成する
@@ -641,30 +647,30 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
     reader, err = readItemWithReader( stream, connInfo.CryptCtrlObj )
     log.Print( "read challenge" )
     if err != nil {
-        return err
+        return nil, err
     }
     var challenge AuthChallenge
     if err := json.NewDecoder( reader ).Decode( &challenge ); err != nil {
-        return err
+        return nil, err
     }
     log.Print( "challenge ", challenge.Challenge )
     // サーバ側のモードを確認して、不整合がないかチェックする
     switch challenge.Mode {
     case "server":
         if param.Mode != "client" {
-            return fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
+            return nil, fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
         }
     case "r-server":
         if param.Mode != "r-client" {
-            return fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
+            return nil, fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
         }
     case "wsserver":
         if param.Mode != "wsclient" {
-            return fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
+            return nil, fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
         }
     case "r-wsserver":
         if param.Mode != "r-wsclient" {
-            return fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
+            return nil, fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
         }
     }
 
@@ -682,24 +688,54 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
             connInfo.SessionInfo.ReadNo, param.ctrl } )
     if err := WriteItem(
         stream, CITIID_CTRL, bytes, connInfo.CryptCtrlObj, nil ); err != nil {
-        return err
+        return nil, err
     }
     connInfo.SessionInfo.SetState( Session_state_authresponse )
 
     
+    var result AuthResult
     {
         // AuthResult を取得する
         log.Print( "read auth result" )
         reader, err := readItemWithReader( stream, connInfo.CryptCtrlObj )
         if err != nil {
-            return err
+            return nil, err
         }
-        var result AuthResult
         if err := json.NewDecoder( reader ).Decode( &result ); err != nil {
-            return err
+            return nil, err
         }
         if result.Result != "ok" {
-            return fmt.Errorf( "failed to auth -- %s", result.Result )
+            return nil, fmt.Errorf( "failed to auth -- %s", result.Result )
+        }
+
+        log.Printf( "forwardList -- %s", result.ForwardList )
+        if forwardList != nil &&
+            result.ForwardList != nil && len( result.ForwardList ) > 0 {
+            // クライアントが指定している ForwardList と、
+            // サーバ側が指定している ForwardList に違いがあるか調べて、
+            // 違う場合は警告を出力する。
+            orgMap := map[string]bool{}
+            for _, forwardInfo := range( forwardList ) {
+                orgMap[ forwardInfo.Src.toStr() + forwardInfo.Dst.toStr() ] = true
+            }
+            newMap := map[string]bool{}
+            for _, forwardInfo := range( result.ForwardList ) {
+                newMap[ forwardInfo.Src.toStr() + forwardInfo.Dst.toStr() ] = true
+            }
+            diff := false
+            if len( orgMap ) != len( newMap ) {
+                diff = true
+            } else {
+                for org, _ := range( orgMap ) {
+                    if _, has := newMap[ org ]; !has {
+                        diff = true
+                        break
+                    }
+                }
+            }
+            if diff {
+                log.Printf( "******* override forward *******" )
+            }
         }
 
         if param.ctrl == CTRL_BENCH {
@@ -709,16 +745,16 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
             for count := 0; count < BENCH_LOOP_COUNT; count++ {
                 if err := WriteItem(
                     stream, CITIID_CTRL, benchBuf, connInfo.CryptCtrlObj, nil ); err != nil {
-                    return err
+                    return nil, err
                 }
                 if _,err := ReadItem(
                     stream, connInfo.CryptCtrlObj, benchBuf, heapCitiBuf ); err != nil  {
-                    return err
+                    return nil, err
                 }
             }
             duration := time.Now().Sub( prev )
                         
-            return fmt.Errorf( "benchmarck -- %s", duration )
+            return nil, fmt.Errorf( "benchmarck -- %s", duration )
         }
         
 
@@ -730,7 +766,7 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
                 //connInfo.SessionInfo.SessionId = result.SessionId
                 connInfo.SessionInfo.UpdateSessionId( result.SessionId )
             } else {
-                return fmt.Errorf(
+                return nil, fmt.Errorf(
                     "illegal sessionId -- %d, %d",
                     connInfo.SessionInfo.SessionId, result.SessionId )
             }
@@ -743,5 +779,5 @@ func ProcessClientAuth( connInfo *ConnInfo, param *TunnelParam ) error {
         connInfo.SessionInfo.SetReWrite( result.ReadNo )
     }
     
-    return nil
+    return result.ForwardList, nil
 }

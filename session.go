@@ -18,9 +18,9 @@ import (
 // tunnel 上に通す tcp の組み合わせ
 type ForwardInfo struct {
     // listen する host:port
-    src HostInfo
+    Src HostInfo
     // forward する相手の host:port
-    dst HostInfo
+    Dst HostInfo
 }
 
 // tunnel の制御パラメータ
@@ -1386,28 +1386,44 @@ func CreateToReconnectFunc( reconnect func( sessionInfo *SessionInfo ) (*ConnInf
 
 type ListenInfo struct {
     listener net.Listener
-    port HostInfo
+    forwardInfo ForwardInfo
 }
-
-func NewListen( port HostInfo ) (*ListenInfo, error) {
-
-    local, err := net.Listen("tcp", port.toStr() )
-    if err != nil {
-        log.Print(err)
-        return nil, err
-    }
-    return &ListenInfo{ local, port }, nil
-}
-
 func (info *ListenInfo) Close() {
     info.listener.Close()
 }
+type ListenGroup struct {
+    list []ListenInfo
+}
+func (group *ListenGroup) Close() {
+    for _, info := range( group.list ) {
+        info.Close()
+    }
+}
+
+func NewListen( forwardList []ForwardInfo ) (*ListenGroup) {
+
+    group := ListenGroup{ []ListenInfo{} }
+    
+    for _, forwardInfo := range( forwardList ) {
+        local, err := net.Listen("tcp", forwardInfo.Src.toStr() )
+        if err != nil {
+            log.Fatal( err )
+            return nil
+        }
+        group.list = append( group.list, ListenInfo{ local, forwardInfo } )
+    }
+    
+    return &group
+}
+
 
 func ListenNewConnectSub(
-    listenInfo *ListenInfo, info *pipeInfo, hostInfo HostInfo ) {
+    listenInfo *ListenInfo, info *pipeInfo ) {
 
     process := func() {
-        log.Printf( "wating with %s\n", listenInfo.port.toStr() )
+        log.Printf( "wating with %s for %s\n",
+            listenInfo.forwardInfo.Src.toStr(),
+            listenInfo.forwardInfo.Dst.toStr() )
         src, err := listenInfo.listener.Accept()
         if err != nil {
             log.Fatal(err)
@@ -1418,11 +1434,13 @@ func ListenNewConnectSub(
         log.Printf( "ListenNewConnectSub -- %s", src )
         
         citi := info.connInfo.SessionInfo.addCiti( src, CITIID_CTRL )
+        dst := listenInfo.forwardInfo.Dst
 
+        
         connInfo := info.connInfo
         var buffer bytes.Buffer
         buffer.Write( []byte{ CTRL_HEADER } )
-        bytes, _ := json.Marshal( &ConnHeader{ hostInfo, citi.citiId } )
+        bytes, _ := json.Marshal( &ConnHeader{ dst, citi.citiId } )
         buffer.Write( bytes )
         
         connInfo.SessionInfo.packChan <- PackInfo{
@@ -1430,10 +1448,10 @@ func ListenNewConnectSub(
 
         respHeader := <-citi.respHeader
         if respHeader.Result {
-            go relaySession( info, citi, hostInfo )
+            go relaySession( info, citi, dst )
             needClose = false
         } else {
-            log.Printf( "failed to connect -- %s:%s", hostInfo.toStr(), respHeader.Mess )
+            log.Printf( "failed to connect -- %s:%s", dst.toStr(), respHeader.Mess )
         }
     }
     
@@ -1450,13 +1468,15 @@ func ListenNewConnectSub(
 // @param parm トンネル情報
 // @param reconnect 再接続関数
 func ListenNewConnect(
-    listenInfo *ListenInfo, connInfo *ConnInfo, hostInfo HostInfo,
-    param *TunnelParam, loop bool,
+    listenGroup *ListenGroup, connInfo *ConnInfo, param *TunnelParam, loop bool,
     reconnect func( sessionInfo *SessionInfo ) *ConnInfo ) {
 
     info := startRelaySession( connInfo, param.keepAliveInterval, true, reconnect )
 
-    go ListenNewConnectSub( listenInfo, info, hostInfo )
+
+    for _, listenInfo := range( listenGroup.list ) {
+        go ListenNewConnectSub( &listenInfo, info )
+    }
 
     for {
         <-connInfo.releaseChan

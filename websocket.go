@@ -94,7 +94,10 @@ func (info *proxyInfo) Dial(network, addr string) (net.Conn, error) {
 }
 
 // websocketUrl で示すサーバに websocket で接続する
-func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param *TunnelParam, sessionInfo *SessionInfo ) (*ConnInfo, error) {
+func ConnectWebScoket(
+    websocketUrl, proxyHost, userAgent string,
+    param *TunnelParam, sessionInfo *SessionInfo,
+    forwardList []ForwardInfo ) (*ConnInfo, []ForwardInfo,error) {
     // websocketUrl := "ws://localhost:12345/echo"
     // proxyHost := "http://localhost:10080"
     // userAgent := "test"
@@ -104,7 +107,7 @@ func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param *TunnelP
     conf, err := websocket.NewConfig( websocketUrl, "http://localhost" )
     if err != nil {
         log.Print( "NewConfig error", err )
-        return nil, err
+        return nil, nil, err
     }
     var websock *websocket.Conn
     if proxyHost != "" {
@@ -114,30 +117,36 @@ func ConnectWebScoket( websocketUrl, proxyHost, userAgent string, param *TunnelP
         conn, err := proxy.Dial( "", websocketUrl )
         if err != nil {
             log.Print( err )
-            return nil, err
+            return nil, nil, err
         }
         // proxy セッション上に websocket 接続
         websock, err = websocket.NewClient( conf, conn )
         if err != nil {
             log.Print( "websocket error", websock, err )
-            return nil, err
+            return nil, nil, err
         }
         //return websock, nil
     } else {
         websock, err = websocket.DialConfig( conf )
         if err != nil {
             log.Print( "websocket error", err )
-            return nil, err
+            return nil, nil, err
         }
     }
     connInfo := CreateConnInfo(
         websock, param.encPass, param.encCount, sessionInfo, false )
-    if err := ProcessClientAuth( connInfo, param ); err != nil {
+    overrideForwardList := forwardList
+    overrideForwardList, err = ProcessClientAuth( connInfo, param, forwardList )
+    if err != nil {
         connInfo.SessionInfo.SetState( Session_state_authmiss )
         log.Print(err)
         websock.Close()
-        return nil, err
+        return nil, nil, err
+    }
+
+    if overrideForwardList == nil || len( overrideForwardList ) == 0 {
+        overrideForwardList = forwardList
     }
     
-    return connInfo, nil
+    return connInfo, overrideForwardList, nil
 }

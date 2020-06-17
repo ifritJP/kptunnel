@@ -56,7 +56,7 @@ func main() {
 	version := cmd.Bool("version", false, "display the version")
 	help := cmd.Bool("help", false, "display help message")
 	cmd.Usage = func() {
-        fmt.Fprintf(cmd.Output(), "\nUsage: %s <mode [-help]>\n\n", os.Args[0])
+        fmt.Fprintf(cmd.Output(), "\nUsage: %s <mode [-help]> [-version]\n\n", os.Args[0])
         fmt.Fprintf(cmd.Output(), " mode: \n" )
         fmt.Fprintf(cmd.Output(), "    server\n" )
         fmt.Fprintf(cmd.Output(), "    r-server\n" )
@@ -134,9 +134,9 @@ func ParseOpt(
     usage := func() {
         fmt.Fprintf(cmd.Output(), "\nUsage: %s %s <server> ", os.Args[0], mode )
         if needForward {
-            fmt.Fprintf(cmd.Output(), "<forward> " )
+            fmt.Fprintf(cmd.Output(), "<forward [forward [...]]> " )
         } else {
-            fmt.Fprintf(cmd.Output(), "[forward] " )
+            fmt.Fprintf(cmd.Output(), "[forward [forward [...]]] " )
         }
         fmt.Fprintf(cmd.Output(), "[option] \n\n" )
         fmt.Fprintf(cmd.Output(), "   server: e.g. localhost:1234 or :1234\n" )
@@ -233,27 +233,27 @@ func ParseOpt(
     
 
     forwardList := []ForwardInfo{}
+    for _, arg := range( nonFlagArgs[1:] ) {
+        tokenList := strings.Split( arg, "," )
+        if len( tokenList ) != 2 {
+            fmt.Printf( "illegal forward. need ',' -- %s", arg )
+            usage()
+        }
+        remoteInfo := hostname2HostInfo( tokenList[1] )
+        if remoteInfo == nil {
+            fmt.Printf( "illegal forward. -- %s", arg )
+            usage()
+        }
+        srcInfo := hostname2HostInfo( tokenList[0] )
+        if srcInfo == nil {
+            fmt.Printf( "illegal forward. -- %s", arg )
+            usage()
+        }
+        forwardList = append(
+            forwardList, ForwardInfo{ Src: *srcInfo, Dst: *remoteInfo } )
+    }
     if mode == "r-server" || mode == "r-wsserver" ||
         mode == "client" || mode == "wsclient" {
-        for _, arg := range( nonFlagArgs[1:] ) {
-            tokenList := strings.Split( arg, "," )
-            if len( tokenList ) != 2 {
-                fmt.Printf( "illegal forward. need ',' -- %s", arg )
-                usage()
-            }
-            remoteInfo := hostname2HostInfo( tokenList[1] )
-            if remoteInfo == nil {
-                fmt.Printf( "illegal forward. -- %s", arg )
-                usage()
-            }
-            srcInfo := hostname2HostInfo( tokenList[0] )
-            if srcInfo == nil {
-                fmt.Printf( "illegal forward. -- %s", arg )
-                usage()
-            }
-            forwardList = append(
-                forwardList, ForwardInfo{ src: *srcInfo, dst: *remoteInfo } )
-        }
         if len( forwardList ) == 0 {
             fmt.Print( "set forward!" )
             usage()
@@ -267,25 +267,15 @@ func ParseOptServer( mode string, args []string ) {
     var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
     param, forwardList := ParseOpt( cmd, mode, args )
 
-    fin := make(chan bool)
-    
     switch mode {
     case "server":
-        StartServer( param )
+        StartServer( param, forwardList )
     case "r-server":
-        for _, forwardInfo := range( forwardList ) {
-            go StartReverseServer( param, forwardInfo, fin )
-        }
+        StartReverseServer( param, forwardList )
     case "wsserver":
-        StartWebsocketServer( param )
+        StartWebsocketServer( param, forwardList )
     case "r-wsserver":
-        for _, forwardInfo := range( forwardList ) {
-            go StartReverseWebSocketServer( param, forwardInfo, fin )
-        }
-    }
-
-    for index := 0; index < len( forwardList ); index++ {
-        <-fin
+        StartReverseWebSocketServer( param, forwardList )
     }
 }
 
@@ -299,25 +289,16 @@ func ParseOptClient( mode string, args []string ) {
     websocketServerInfo := HostInfo{
         "ws://", param.serverInfo.Name, param.serverInfo.Port, "/" }
 
-    fin := make(chan bool)
     switch mode {
     case "client":
-        for _, forwardInfo := range( forwardList ) {
-            go StartClient( param, forwardInfo, fin )
-        }
+        StartClient( param, forwardList )
     case "r-client":
         StartReverseClient( param )
     case "wsclient":
-        for _, forwardInfo := range( forwardList ) {
-            go StartWebSocketClient(
-                *userAgent, param, websocketServerInfo, *proxyHost, forwardInfo, fin )
-        }
+        StartWebSocketClient(
+            *userAgent, param, websocketServerInfo, *proxyHost, forwardList )
     case "r-wsclient":
         StartReverseWebSocketClient( *userAgent, param, websocketServerInfo, *proxyHost )
-    }
-
-    for index := 0; index < len( forwardList ); index++ {
-        <-fin
     }
 }
 

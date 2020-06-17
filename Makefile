@@ -67,7 +67,7 @@ ifdef TEST_PROF
 TEST_CLIENT_OP=-prof :9000
 TEST_TIME=40
 else
-TEST_TIME=3
+TEST_TIME=4
 endif
 
 # iperf3 のテストケース
