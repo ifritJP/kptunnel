@@ -90,6 +90,13 @@ func CreateCryptCtrl( pass *string, count int ) *CryptCtrl {
     return &ctrl
 }
 
+func (mode *CryptMode) IsValid() bool {
+    if mode == nil || mode.countMax == 0 {
+        return false
+    }
+    return true
+}
+
 // 暗号・複合処理
 //
 // @param inbuf 処理対象のデータを保持するバッファ
@@ -114,6 +121,7 @@ func (mode *CryptMode) Process( inbuf []byte, outbuf []byte ) []byte {
             mode.count++
         } else if mode.countMax <= mode.count {
             mode.countMax = 0
+            log.Print( "crypto is disabled" );
         }
     }
     // buf := work[:len(inbuf)]
@@ -341,7 +349,7 @@ func ReadItem(
                 log.Fatal( "workbuf size is short -- ", len( workBuf ) )
             }
             citiPackBuf = citiBuf.GetPacketBuf( item.citiId, packSize )
-            if ctrl == nil {
+            if ctrl == nil || !ctrl.dec.IsValid() {
                 // 暗号化無しなら packBuf に citiPackBuf を直接入れる
                 packBuf = citiPackBuf
             } else {

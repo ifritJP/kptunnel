@@ -65,6 +65,7 @@ const CTRL_HEADER = 0
 const CTRL_RESP_HEADER = 1
 
 
+// 再接続後の CryptCtrlObj を同じものを使えるようにするまで true には出来ない
 const PRE_ENC = false
 
 
@@ -597,7 +598,8 @@ func (info *ConnInfo) writeData( stream io.Writer, citiId uint32, bytes []byte )
             return err
         }
     } else {
-        if err := WriteItem( stream, citiId, bytes, nil, &info.writeBuffer ); err != nil {
+        if err := WriteItem(
+            stream, citiId, bytes, nil, &info.writeBuffer ); err != nil {
             return err
         }
     }
@@ -854,9 +856,15 @@ func rewirte2Tunnel( info *pipeInfo, connInfoRev *ConnInfoRev ) bool {
             packet := item.Value.(SessionPacket)
             if packet.no == sessionInfo.ReWriteNo {
                 // 再送対象の packet が見つかった
-                err := WriteItem(
+                var err error
+
+                cryptoObj := connInfoRev.connInfo.CryptCtrlObj
+                if PRE_ENC {
+                    cryptoObj = nil
+                }
+                err = WriteItem(
                     connInfoRev.connInfo.Conn, packet.citiId, packet.bytes,
-                    connInfoRev.connInfo.CryptCtrlObj, &connInfoRev.connInfo.writeBuffer )
+                    cryptoObj, &connInfoRev.connInfo.writeBuffer )
                 if err != nil {
                     end := false
                     connInfoRev.connInfo.Conn.Close()                    
@@ -1127,7 +1135,7 @@ func packetEncrypter( info *pipeInfo ) {
             switch packet.kind {
             case PACKET_KIND_NORMAL:
                 buf := ringBufEnc.getNext()
-                // buf := make([]byte,BUFSIZE)
+                //buf := make([]byte,BUFSIZE)
                 
                 if info.connInfo.CryptCtrlObj != nil {
                     packet.bytes = info.connInfo.CryptCtrlObj.enc.Process(

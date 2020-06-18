@@ -6,6 +6,12 @@
 
 #+TITLE: TODO
 
+- [ ] PRE_ENC を有効にすると、再接続の通信復帰が正常に行なえない。
+  - packetEncrypter() で暗号化している CryptCtrlObj と、
+    再送信後の CryptCtrlObj が別モノになっているので、
+    復号が正常に行なえない。
+    再送信後の CryptCtrlObj を同じものを使う必要がある。
+
 - [ ] tunnel を張った後、 セッションを開始しないでタイムアウトすると、
       使用中のポートを listen しようとしてエラー
 - [ ] 存在しない sessionId の接続要請が来た場合、 reject する
