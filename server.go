@@ -32,6 +32,59 @@ func StartEchoServer( serverInfo HostInfo ) {
 	}
 }
 
+func StartHeavyClient( serverInfo HostInfo ) {
+    conn, err := net.Dial("tcp", serverInfo.toStr() )
+    if err != nil {
+		log.Fatal( err )
+    }
+    defer conn.Close()
+
+    dummy := make( []byte, 100 )
+    for index := 0; index < len( dummy ); index++ {
+        dummy[ index ] = byte(index)
+    }
+    log.Print("connected")
+
+    prev := time.Now()
+    writeCount := 0
+    readCount := 0
+
+    write := func () {
+        for {
+            if _, err := conn.Write( dummy ); err != nil {
+                log.Fatal( err )
+            }
+            writeCount++
+        }
+    }
+    read := func () {
+        for {
+            if _, err := io.ReadFull( conn, dummy ); err != nil {
+                log.Fatal( err )
+            }
+            for index := 0; index < len( dummy ); index++ {
+                if dummy[ index ] != byte(index) {
+                    log.Fatalf(
+                        "unmatch -- %d %d %X %X",
+                        readCount, index, dummy[ index ], byte(index) )
+                }
+            }
+            readCount++
+        }
+    }
+    go write()
+    go read()
+    
+    for {
+        span := time.Now().Sub( prev )
+        if span > time.Millisecond * 1000 {
+            prev = time.Now()
+            log.Printf( "hoge -- %d, %d", writeCount, readCount )
+        }
+    }
+}
+
+
 func listenTcpServer(
     local net.Listener, param *TunnelParam, forwardList []ForwardInfo,
     process func( connInfo *ConnInfo) ) {

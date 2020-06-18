@@ -6,6 +6,11 @@
 
 #+TITLE: TODO
 
+
+- [ ] 再送の対象が NORMAL だけ。
+      他のパケットも再送しないと矛盾が発生する。
+      特に SYNC は再送しないと、 同期制御が崩れて動かなくなる。
+  
 - [ ] PRE_ENC を有効にすると、再接続の通信復帰が正常に行なえない。
   - packetEncrypter() で暗号化している CryptCtrlObj と、
     再送信後の CryptCtrlObj が別モノになっているので、

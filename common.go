@@ -153,7 +153,6 @@ const PACKET_KIND_EOS = 2
 // Tunnel の通信を同期するためのパケット
 const PACKET_KIND_SYNC = 3
 const PACKET_KIND_NORMAL_DIRECT = 4
-const PACKET_KIND_PACKED = 5
 
 
 var dummyKindBuf = []byte{ PACKET_KIND_DUMMY }
@@ -510,7 +509,12 @@ func ProcessServerAuth(
         sessionId = connInfo.SessionInfo.SessionId
         newSession = true
     } else {
-        connInfo.SessionInfo = GetSessionInfo( sessionId )
+        has := true
+        connInfo.SessionInfo, has = GetSessionInfo( sessionId )
+        if !has {
+            return false, fmt.Errorf( "not found session -- %d", sessionId )
+        }
+        WaitPauseSession( connInfo.SessionInfo )
     }
     log.Printf(
         "sessionId: %d, ReadNo: %d(%d), WriteNo: %d(%d)",

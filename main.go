@@ -98,6 +98,8 @@ func main() {
             ParseOptClient( mode, cmd.Args()[1:] )
         case "echo":
             ParseOptEcho( mode, cmd.Args()[1:] )
+        case "heavy":
+            ParseOptHeavy( mode, cmd.Args()[1:] )
         case "test":
             test()
         }
@@ -307,6 +309,13 @@ func ParseOptEcho( mode string, args []string ) {
     param, _ := ParseOpt( cmd, mode, args )
 
     StartEchoServer( param.serverInfo )
+}
+
+func ParseOptHeavy( mode string, args []string ) {
+    var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+    param, _ := ParseOpt( cmd, mode, args )
+
+    StartHeavyClient( param.serverInfo )
 }
 
 
