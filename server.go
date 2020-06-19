@@ -46,21 +46,24 @@ func StartHeavyClient( serverInfo HostInfo ) {
     log.Print("connected")
 
     prev := time.Now()
-    writeCount := 0
-    readCount := 0
+    writeCount := uint64(0)
+    readCount := uint64(0)
 
     write := func () {
         for {
-            if _, err := conn.Write( dummy ); err != nil {
+            if size, err := conn.Write( dummy ); err != nil {
                 log.Fatal( err )
+            } else {
+                writeCount += uint64(size)
             }
-            writeCount++
         }
     }
     read := func () {
         for {
-            if _, err := io.ReadFull( conn, dummy ); err != nil {
+            if size, err := io.ReadFull( conn, dummy ); err != nil {
                 log.Fatal( err )
+            } else {
+                readCount += uint64(size)
             }
             for index := 0; index < len( dummy ); index++ {
                 if dummy[ index ] != byte(index) {
@@ -69,7 +72,6 @@ func StartHeavyClient( serverInfo HostInfo ) {
                         readCount, index, dummy[ index ], byte(index) )
                 }
             }
-            readCount++
         }
     }
     go write()
