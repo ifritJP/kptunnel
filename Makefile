@@ -10,14 +10,14 @@ all:
 
 
 build:
-	go build -o tunnel$(SUFFIX) *.go
+	go build -o kptunnel$(SUFFIX) *.go
 
 build-win:
 	GOARCH=386 GOOS=windows $(MAKE) build SUFFIX=.exe
 
 profile:
 	curl --proxy '' -s http://localhost:9000/debug/pprof/profile > tmp/cpu.pprof
-	go tool pprof tunnel tmp/cpu.pprof 
+	go tool pprof kptunnel tmp/cpu.pprof 
 
 # 第一引数をバックグラウンドで実行し、
 # その pid を kill するコマンドを kill-pid-list に追加する
@@ -29,7 +29,7 @@ endef
 
 kill-test:
 	-pkill -9 iperf3
-	-pkill -9 tunnel
+	-pkill -9 kptunnel
 
 
 TEST_ENC_COUNT=0
@@ -74,17 +74,17 @@ endif
 
 # iperf3 のテストケース
 test-iperf3-main:
-	$(call exebg,./tunnel ${SERVER_MODE} :8000 -encCount ${TEST_ENC_COUNT} ${SERVER_OP} -console :10001 > tmp/test-server.log 2>&1)
+	$(call exebg,./kptunnel ${SERVER_MODE} :8000 -encCount ${TEST_ENC_COUNT} ${SERVER_OP} -console :10001 > tmp/test-server.log 2>&1)
 	$(call exebg,iperf3 -s > tmp/iperf3.log 2>&1)
 	sleep 1
-	$(call exebg,./tunnel ${CLIENT_MODE} -encCount ${TEST_ENC_COUNT} :8000 ${CLIENT_OP} -console :10002 $(TEST_CLIENT_OP) > tmp/test-client.log 2>&1)
+	$(call exebg,./kptunnel ${CLIENT_MODE} -encCount ${TEST_ENC_COUNT} :8000 ${CLIENT_OP} -console :10002 $(TEST_CLIENT_OP) > tmp/test-client.log 2>&1)
 	sleep 2
 ifdef TEST_PROF
 	curl --proxy '' -s http://localhost:9000/debug/pprof/profile > tmp/cpu.pprof &
 endif
 	iperf3 -c 127.0.0.1 -p 8001 -t $(TEST_TIME)
 ifdef TEST_PROF
-	go tool pprof tunnel tmp/cpu.pprof
+	go tool pprof kptunnel tmp/cpu.pprof
 	exit 1
 endif
 	sleep 1
@@ -100,11 +100,11 @@ test-r-echo:
 
 # echo サーバを使ったテストケース
 test-echo-main:
-	$(call exebg,./tunnel ${SERVER_MODE} :8000 -verbose \
+	$(call exebg,./kptunnel ${SERVER_MODE} :8000 -verbose \
 		-encCount ${TEST_ENC_COUNT} ${SERVER_OP} > tmp/test-server.log 2>&1)
-	$(call exebg,./tunnel echo :10000 > /dev/null 2>&1)
+	$(call exebg,./kptunnel echo :10000 > /dev/null 2>&1)
 	sleep 1
-	$(call exebg,./tunnel ${CLIENT_MODE} :8000 -verbose \
+	$(call exebg,./kptunnel ${CLIENT_MODE} :8000 -verbose \
 		-encCount ${TEST_ENC_COUNT} ${CLIENT_OP} > tmp/test-client.log 2>&1)
 	sleep 2
 	-telnet localhost 8001
@@ -119,16 +119,16 @@ test-heavy:
 
 # echo,heavy,proxy を使ったテストケース。
 test-heavy-main:
-	$(call exebg,./tunnel ${SERVER_MODE} :8000 -console :9000 \
+	$(call exebg,./kptunnel ${SERVER_MODE} :8000 -console :9000 \
 		-encCount ${TEST_ENC_COUNT} ${SERVER_OP} > tmp/test-server.log 2>&1)
-	$(call exebg,./tunnel echo :10000 > /dev/null 2>&1)
+	$(call exebg,./kptunnel echo :10000 > /dev/null 2>&1)
 	$(call exebg,./test/proxy/server)
 	sleep 1
-	$(call exebg,./tunnel ${CLIENT_MODE} :8000 -console :9001 \
+	$(call exebg,./kptunnel ${CLIENT_MODE} :8000 -console :9001 \
 		-proxy http://localhost:10080 \
 		-encCount ${TEST_ENC_COUNT} ${CLIENT_OP} > tmp/test-client.log 2>&1)
 	sleep 1
-	$(call exebg,./tunnel heavy :8001)
+	$(call exebg,./kptunnel heavy :8001)
 
 	while expr 1; do \
 		make test-heavy-sub || exit 1; \
