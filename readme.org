@@ -13,7 +13,7 @@ https://github.com/jpillora/chisel
 
 * demo
 
-[[https://ifritjp.github.io/blog2/public/posts/2020/tunnel.gif]]  
+[[https://ifritjp.github.io/blog2/public/posts/2020/2020-05-29-tunnel/#headline-12]]  
 
 * performance
 
