@@ -40,7 +40,7 @@ TEST_ENC_COUNT=0
 TEST_MAIN=
 exec-test:
 	$(MAKE) build
-	-@mkdir -f tmp
+	-@mkdir -p tmp
 	-@rm -f tmp/kill-pid-list
 	-@$(MAKE) ${TEST_MAIN}
 	bash tmp/kill-pid-list > /dev/null 2>&1
