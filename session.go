@@ -905,14 +905,15 @@ func tunnel2Stream( sessionInfo *SessionInfo, dst *ConnInTunnelInfo, fin chan bo
 // @param connInfo コネクション情報
 // @param rev リビジョン
 // @return bool 処理を続ける場合 true
-func rewirte2Tunnel( info *pipeInfo, connInfoRev *ConnInfoRev, writeNo int64 ) bool {
+func rewirte2Tunnel( info *pipeInfo, connInfoRev *ConnInfoRev ) bool {
     // 再接続後にパケットの再送を行なう
     sessionInfo := connInfoRev.connInfo.SessionInfo
     if sessionInfo.ReWriteNo == -1 {
         return true
     }
-    log.Printf( "rewirte2Tunnel: %d, %d", writeNo, sessionInfo.ReWriteNo )
-    for writeNo > sessionInfo.ReWriteNo {
+    log.Printf(
+        "rewirte2Tunnel: %d, %d", sessionInfo.WriteNo, sessionInfo.ReWriteNo )
+    for sessionInfo.WriteNo > sessionInfo.ReWriteNo {
         item := sessionInfo.WritePackList.Front()
         for ; item != nil; item = item.Next() {
             packet := item.Value.(SessionPacket)
@@ -938,7 +939,7 @@ func rewirte2Tunnel( info *pipeInfo, connInfoRev *ConnInfoRev, writeNo int64 ) b
                     log.Printf(
                         "rewrite: %d, %d, %p",
                         sessionInfo.ReWriteNo, packet.pack.kind, packet.pack.bytes )
-                    if writeNo == sessionInfo.ReWriteNo {
+                    if sessionInfo.WriteNo == sessionInfo.ReWriteNo {
                         sessionInfo.ReWriteNo = -1
                     } else {
                         sessionInfo.ReWriteNo++
@@ -1156,6 +1157,20 @@ func packetReader( info *pipeInfo ) {
     info.fin <- true
 }
 
+func reconnectAndRewrite(
+    info *pipeInfo, connInfoRev *ConnInfoRev ) bool {
+    end := false
+    connInfoRev.connInfo, connInfoRev.rev, end =
+        info.reconnect( "write", connInfoRev.rev )
+    if end {
+        return false
+    }
+    if !rewirte2Tunnel( info, connInfoRev ) {
+        return false
+    }
+    return true
+}
+
 // packet を connInfoRev に書き込む。
 //
 // 書き込みに失敗した場合は、 reconnect と再送信を行なう。
@@ -1166,15 +1181,15 @@ func packetReader( info *pipeInfo ) {
 // @param info pipe情報
 // @param packet 送信するデータ
 // @param connInfoRev コネクション情報
-// @param writeNo packet が含む先頭データの WriteNo
-// @param write データを書き込むための関数
 func packetWriterSub(
-    info *pipeInfo, packet *PackInfo, connInfoRev *ConnInfoRev, writeNo int64,
-    write func( packet *PackInfo, stream io.Writer, connInfo *ConnInfo ) (bool,error) ) bool {
+    info *pipeInfo, packet *PackInfo, connInfoRev *ConnInfoRev ) bool {
+
+    sessionInfo := connInfoRev.connInfo.SessionInfo
     for {
         var writeerr error
 
-        if ret, err := write( packet, connInfoRev.connInfo.Conn, connInfoRev.connInfo ); err != nil {
+        if ret, err := writePack(
+            packet, connInfoRev.connInfo.Conn, connInfoRev.connInfo, true ); err != nil {
             writeerr = err
         } else if !ret {
             return false
@@ -1182,24 +1197,14 @@ func packetWriterSub(
         if writeerr != nil {
             log.Printf(
                 "tunnel write err log: %p, writeNo=%d, err=%s",
-                connInfoRev.connInfo, connInfoRev.connInfo.SessionInfo.WriteNo, writeerr )
-            end := false
-            connInfoRev.connInfo, connInfoRev.rev, end =
-                info.reconnect( "write", connInfoRev.rev )
-            if end {
+                connInfoRev.connInfo, sessionInfo.WriteNo, writeerr )
+            if !reconnectAndRewrite( info, connInfoRev ) {
                 return false
-            }
-            if !rewirte2Tunnel( info, connInfoRev, writeNo ) {
-                return true
             }
         } else {
             return true
         }
-        if packet == nil {
-            log.Printf( "retry to write -- %d, nil", writeNo )
-        } else {
-            log.Printf( "retry to write -- %d, %d", writeNo, packet.kind )
-        }
+        log.Printf( "retry to write -- %d, %d", sessionInfo.WriteNo, packet.kind )
     }
 }
 
@@ -1297,7 +1302,6 @@ func packetWriter( info *pipeInfo ) {
     packetNo := 0
     for {
         sessionInfo.writeState = 10
-        nowWriteNo := sessionInfo.WriteNo
         
         packetNo++
         prev := time.Now()
@@ -1343,29 +1347,22 @@ func packetWriter( info *pipeInfo ) {
             // buffer にデータがセットされていれば、
             // 結合データがあるので buffer を書き込む
             //log.Print( "concat -- ", len( buffer.Bytes() ) )
-            cont := true
-            cont = packetWriterSub(
-                info, nil, &connInfoRev, nowWriteNo,
-                func( packet *PackInfo, stream io.Writer, workConnInfo *ConnInfo ) (bool,error) {
-                    if _, err := workConnInfo.Conn.Write( buffer.Bytes() ); err != nil {
-                        return false, err
-                    } else {
-                        return true, nil
-                    }
-                })
-            if !cont {
-                break
+            if _, err := connInfoRev.connInfo.Conn.Write( buffer.Bytes() ); err != nil {
+                log.Printf(
+                    "tunnel batch write err log: %p, writeNo=%d, err=%s",
+                    connInfoRev.connInfo, connInfoRev.connInfo.SessionInfo.WriteNo, err )
+                // batch の buffer は、reconnect 前の暗号で暗号化しているため、
+                // そのまま送信すると受信側で decrypt に失敗する。
+                // それを回避するため batch 書き込みに失敗した場合、
+                // batch 書き込みはせずに rewrite でリカバリする。
+                if !reconnectAndRewrite( info, &connInfoRev ) {
+                    break
+                }
             }
         }
 
         sessionInfo.writeState = 40
-        cont := true
-        cont = packetWriterSub(
-            info, &packet, &connInfoRev, sessionInfo.WriteNo,
-            func( packet *PackInfo, stream io.Writer, workConnInfo *ConnInfo ) (bool,error) {
-                return writePack( packet, stream, workConnInfo, true );
-            })
-        if !cont {
+        if !packetWriterSub( info, &packet, &connInfoRev ) {
             break
         }
     }
@@ -1469,6 +1466,9 @@ func relaySession( info *pipeInfo, citi *ConnInTunnelInfo, hostInfo HostInfo ) {
     log.Printf(
         "close citi: readNo %d, writeNo %d, readPackChan %d",
         citi.ReadNo, citi.WriteNo, len( citi.readPackChan ) )
+    log.Printf(
+        "close citi: session readNo %d, session writeNo %d",
+        sessionInfo.ReadNo, sessionInfo.WriteNo )
     log.Printf(
         "waittime: stream2Tunnel %s, tunnel2Stream %s, packetWriter %s, packetReader %s\n",
         citi.waitTimeInfo.stream2Tunnel,
