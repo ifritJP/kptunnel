@@ -115,6 +115,7 @@ test-echo-main:
 # enter を押す毎に、 proxy 切断、再接続を行なう。
 # テストを終了する場合は、 enter だけでなく何かキー入力後に + enter する。
 test-heavy:
+	(cd test/proxy/; go build server.go)
 	$(MAKE) test-ws TEST_MAIN=test-heavy-main REMOTE=:10000
 
 # echo,heavy,proxy を使ったテストケース。
@@ -122,10 +123,10 @@ test-heavy-main:
 	$(call exebg,./kptunnel ${SERVER_MODE} :8000 -console :9000 \
 		-encCount ${TEST_ENC_COUNT} ${SERVER_OP} > tmp/test-server.log 2>&1)
 	$(call exebg,./kptunnel echo :10000 > /dev/null 2>&1)
-	$(call exebg,./test/proxy/server)
+	$(call exebg,./test/proxy/server -p 20080)
 	sleep 1
 	$(call exebg,./kptunnel ${CLIENT_MODE} :8000 -console :9001 \
-		-proxy http://localhost:10080 \
+		-proxy http://localhost:20080 \
 		-encCount ${TEST_ENC_COUNT} ${CLIENT_OP} > tmp/test-client.log 2>&1)
 	sleep 1
 	$(call exebg,./kptunnel heavy :8001)
@@ -135,7 +136,7 @@ test-heavy-main:
 	done
 
 define emph
-	printf "\033[32m%s\033[25;m\n" $1
+	@printf "\033[32m%s\033[25;m\n" $1
 endef
 
 test-heavy-sub:
@@ -144,7 +145,7 @@ test-heavy-sub:
 	@tac tmp/kill-pid-list | grep /test/proxy/server | awk '//{system( "kill -9 " $$3 ); exit(0) }'
 	$(call emph,"hit enter to restart the proxy; hit any char and enter to finish")
 	@read stop_proxy; if [ "$$stop_proxy" != "" ]; then exit 1; fi
-	$(call exebg,./test/proxy/server)
+	$(call exebg,./test/proxy/server -p 20080)
 
 
 test-chisel-iperf3:

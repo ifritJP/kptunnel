@@ -97,7 +97,7 @@ func (info *proxyInfo) Dial(network, addr string) (net.Conn, error) {
 func ConnectWebScoket(
     websocketUrl, proxyHost, userAgent string,
     param *TunnelParam, sessionInfo *SessionInfo,
-    forwardList []ForwardInfo ) (*ConnInfo, []ForwardInfo,error) {
+    forwardList []ForwardInfo ) ([]ForwardInfo, ReconnectInfo) {
     // websocketUrl := "ws://localhost:12345/echo"
     // proxyHost := "http://localhost:10080"
     // userAgent := "test"
@@ -107,7 +107,7 @@ func ConnectWebScoket(
     conf, err := websocket.NewConfig( websocketUrl, "http://localhost" )
     if err != nil {
         log.Print( "NewConfig error", err )
-        return nil, nil, err
+        return nil, ReconnectInfo{ nil, true, err }
     }
     var websock *websocket.Conn
     if proxyHost != "" {
@@ -117,36 +117,37 @@ func ConnectWebScoket(
         conn, err := proxy.Dial( "", websocketUrl )
         if err != nil {
             log.Print( err )
-            return nil, nil, err
+            return nil, ReconnectInfo{ nil, true, err }
         }
         // proxy セッション上に websocket 接続
         websock, err = websocket.NewClient( conf, conn )
         if err != nil {
             log.Print( "websocket error", websock, err )
-            return nil, nil, err
+            return nil, ReconnectInfo{ nil, true, err }
         }
         //return websock, nil
     } else {
         websock, err = websocket.DialConfig( conf )
         if err != nil {
             log.Print( "websocket error", err )
-            return nil, nil, err
+            return nil, ReconnectInfo{ nil, true, err }
         }
     }
     connInfo := CreateConnInfo(
         websock, param.encPass, param.encCount, sessionInfo, false )
     overrideForwardList := forwardList
-    overrideForwardList, err = ProcessClientAuth( connInfo, param, forwardList )
+    cont := true
+    overrideForwardList, cont, err = ProcessClientAuth( connInfo, param, forwardList )
     if err != nil {
         connInfo.SessionInfo.SetState( Session_state_authmiss )
         log.Print(err)
         websock.Close()
-        return nil, nil, err
+        return nil, ReconnectInfo{ nil, cont, err }
     }
 
     if overrideForwardList == nil || len( overrideForwardList ) == 0 {
         overrideForwardList = forwardList
     }
     
-    return connInfo, overrideForwardList, nil
+    return overrideForwardList, ReconnectInfo{ connInfo, true, nil }
 }

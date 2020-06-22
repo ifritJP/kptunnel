@@ -2,9 +2,11 @@ package main
 
 import (
     "encoding/binary"
+    "encoding/json"
+    "encoding/base64"
+	"crypto/rand"
     "container/list"
 	"container/ring"
-    "encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -176,6 +178,7 @@ type WaitTimeInfo struct {
 type SessionInfo struct {
     // セッションを識別する ID
     SessionId int
+    SessionToken string
 
     // packet 書き込み用 channel
     packChan chan PackInfo
@@ -219,6 +222,8 @@ type SessionInfo struct {
     // reconnet を待っている状態。
     // 0: 待ち無し, 1: read or write どちらかで待ち,  2: read/write 両方で待ち
     reconnetWaitState int
+
+    releaseChan chan bool
 }
 
 func (sessionInfo *SessionInfo) GetPacketBuf( citiId uint32, packSize uint16 ) []byte {
@@ -253,9 +258,11 @@ func (sessionInfo *SessionInfo) Setup() {
     }
 }
 
-func newEmptySessionInfo( sessionId int, isTunnelServer bool ) *SessionInfo {
+func newEmptySessionInfo(
+    sessionId int, token string, isTunnelServer bool ) *SessionInfo {
     sessionInfo := &SessionInfo{
         SessionId: sessionId,
+        SessionToken: token,
         packChan: make(chan PackInfo, PACKET_NUM ),
         packChanEnc: make(chan PackInfo, PACKET_NUM ),
         readSize: 0, 
@@ -275,6 +282,7 @@ func newEmptySessionInfo( sessionId int, isTunnelServer bool ) *SessionInfo {
         readState:0,
         writeState:0,
         reconnetWaitState: 0,
+        releaseChan: make( chan bool, 10 ),
     }
 
     sessionInfo.Setup()
@@ -285,8 +293,9 @@ func DumpSession( stream io.Writer ) {
     sessionMgr.mutex.Lock()
     defer sessionMgr.mutex.Unlock()
 
-    for sessionId, sessionInfo := range( sessionMgr.sessionId2info ) {
-        fmt.Fprintf( stream, "sessionId: %d\n", sessionId )
+    for _, sessionInfo := range( sessionMgr.sessionToken2info ) {
+        fmt.Fprintf( stream, "sessionId: %d\n", sessionInfo.SessionId )
+        fmt.Fprintf( stream, "token: %s\n", sessionInfo.SessionToken )
         fmt.Fprintf( stream, "state: %s\n", sessionInfo.state )
         fmt.Fprintf(
             stream, "WriteNo, ReadNo: %d %d\n",
@@ -324,19 +333,25 @@ func NewSessionInfo( isTunnelServer bool ) *SessionInfo {
     defer sessionMgr.mutex.Unlock()
 
     nextSessionId++
-
-    sessionInfo := newEmptySessionInfo( nextSessionId, isTunnelServer )
-    sessionMgr.sessionId2info[ sessionInfo.SessionId ] = sessionInfo
+    
+	randbin := make([]byte, 9)
+	if _, err := io.ReadFull(rand.Reader, randbin); err != nil {
+		panic(err.Error())
+	}
+    token := base64.StdEncoding.EncodeToString( randbin )
+    sessionInfo := newEmptySessionInfo( nextSessionId, token, isTunnelServer )
+    sessionMgr.sessionToken2info[ sessionInfo.SessionToken ] = sessionInfo
 
     return sessionInfo
 }
 
-func (sessionInfo *SessionInfo) UpdateSessionId(sessionId int) {
+func (sessionInfo *SessionInfo) UpdateSessionId(sessionId int, token string) {
     sessionMgr.mutex.Lock()
     defer sessionMgr.mutex.Unlock()
     
     sessionInfo.SessionId = sessionId
-    sessionMgr.sessionId2info[ sessionInfo.SessionId ] = sessionInfo
+    sessionInfo.SessionToken = token
+    sessionMgr.sessionToken2info[ sessionInfo.SessionToken ] = sessionInfo
 }
 
 
@@ -443,7 +458,6 @@ type ConnInfo struct {
     CryptCtrlObj *CryptCtrl
     // セッション情報
     SessionInfo *SessionInfo
-    releaseChan chan bool
     writeBuffer bytes.Buffer
 }
 
@@ -459,11 +473,10 @@ func CreateConnInfo(
     conn io.ReadWriteCloser, pass *string, count int,
     sessionInfo *SessionInfo, isTunnelServer bool ) *ConnInfo {
     if sessionInfo == nil {
-        sessionInfo = newEmptySessionInfo( 0, isTunnelServer )
+        sessionInfo = newEmptySessionInfo( 0, "", isTunnelServer )
     }
     return &ConnInfo{
-        conn, CreateCryptCtrl( pass, count ),
-        sessionInfo, make(chan bool,1), bytes.Buffer{} }
+        conn, CreateCryptCtrl( pass, count ), sessionInfo, bytes.Buffer{} }
 }
 
 // 再送信パケット番号の送信
@@ -488,7 +501,7 @@ func (sessionInfo *SessionInfo) SetReWrite( readNo int64 ) {
 // セッション管理
 type sessionManager struct {
     // sessionID -> SessionInfo のマップ
-    sessionId2info map[int] *SessionInfo
+    sessionToken2info map[string] *SessionInfo
     // sessionID -> ConnInfo のマップ
     sessionId2conn map[int] *ConnInfo
     // sessionID -> pipeInfo のマップ
@@ -501,7 +514,7 @@ type sessionManager struct {
 }
 
 var sessionMgr = sessionManager{
-    map[int] *SessionInfo{},
+    map[string] *SessionInfo{},
     map[int] *ConnInfo{},
     map[int] *pipeInfo{},
     map[io.ReadWriteCloser] bool{},
@@ -514,16 +527,16 @@ func SetSessionConn( connInfo *ConnInfo ) {
     sessionMgr.mutex.Lock()
     defer sessionMgr.mutex.Unlock()
 
-    sessionMgr.sessionId2conn[ sessionId ] = connInfo
+    sessionMgr.sessionId2conn[ connInfo.SessionInfo.SessionId ] = connInfo
     sessionMgr.conn2alive[ connInfo.Conn ] = true
 }
 
-// 指定のセッション ID に紐付けられた SessionInfo を取得する
-func GetSessionInfo( sessionId int ) (*SessionInfo, bool) {
+// 指定のセッション token  に紐付けられた SessionInfo を取得する
+func GetSessionInfo( token string ) (*SessionInfo, bool) {
     sessionMgr.mutex.Lock()
     defer sessionMgr.mutex.Unlock()
 
-    sessionInfo, has := sessionMgr.sessionId2info[ sessionId ]
+    sessionInfo, has := sessionMgr.sessionToken2info[ token ]
     return sessionInfo, has
 }
 
@@ -558,6 +571,12 @@ type pipeInfo struct {
     // connInfo のリビジョン。 再接続確立毎にカウントアップする。
     rev int
     // 再接続用関数
+    //
+    // @param sessionInfo セッション情報
+    // @return *ConnInfo 接続したコネクション。
+    //     再接続できない場合は nil。
+    //     再接続のリトライは、この関数内で行なう。
+    //     この関数で nil を返すと、再接続を諦める。
     reconnectFunc func(sessionInfo *SessionInfo) *ConnInfo
     // この構造体のメンバアクセス排他用 mutex
     mutex *sync.Mutex
@@ -787,7 +806,7 @@ func releaseSessionConn( connInfo *ConnInfo ) {
 
     connInfo.Conn.Close()
     
-    connInfo.releaseChan <- true
+    connInfo.SessionInfo.releaseChan <- true
 }
 
 // 指定のセッションに対応するコネクションを取得する
@@ -1121,7 +1140,6 @@ func packetReader( info *pipeInfo ) {
                 }
                 if readSize == 0 {
                     if packet.citiId == CITIID_CTRL {
-                        connInfo.releaseChan <- true
                         info.end = true
                     }
                 }
@@ -1138,6 +1156,7 @@ func packetReader( info *pipeInfo ) {
             }
             sessionInfo.readState = 50
             if info.end {
+                sessionInfo.releaseChan <- false
                 for _, workciti := range(sessionInfo.citiId2Info) {
                     if len( workciti.syncChan ) == 0 {
                         // 終了する際に、 stream2Tunnel() 側が待ちになっている可能性があるので
@@ -1481,8 +1500,18 @@ func relaySession( info *pipeInfo, citi *ConnInTunnelInfo, hostInfo HostInfo ) {
     // sessionInfo.packChan <- PackInfo { nil, PACKET_KIND_EOS, CITIID_CTRL } // pending
 }
 
+// 再接続情報
+type ReconnectInfo struct {
+    // 再接続後のコネクション情報
+    Conn *ConnInfo
+    // エラー時、再接続の処理を継続するかどうか。継続する場合 true。
+    Cont bool
+    // 再接続でエラーした際のエラー
+    Err error
+}
+
 // 再接続をリトライする関数を返す
-func CreateToReconnectFunc( reconnect func( sessionInfo *SessionInfo ) (*ConnInfo, error) ) func( sessionInfo *SessionInfo ) *ConnInfo {
+func CreateToReconnectFunc( reconnect func( sessionInfo *SessionInfo ) ReconnectInfo ) func( sessionInfo *SessionInfo ) *ConnInfo {
     return func( sessionInfo *SessionInfo ) *ConnInfo {
         timeList := []time.Duration {
             500 * time.Millisecond,
@@ -1499,12 +1528,16 @@ func CreateToReconnectFunc( reconnect func( sessionInfo *SessionInfo ) (*ConnInf
             timeout := timeList[ index ]
             log.Printf(
                 "reconnecting... session: %d, timeout: %v", sessionId, timeout )
-            connInfo, err := reconnect( sessionInfo )
-            if err == nil {
+            reconnectInfo := reconnect( sessionInfo )
+            if reconnectInfo.Err == nil {
                 log.Print( "reconnect -- ok session: ", sessionId )
-                return connInfo
+                return reconnectInfo.Conn
             }
-            log.Printf( "reconnecting error -- %s\n", err )
+            log.Printf( "reconnecting error -- %s\n", reconnectInfo.Err )
+            if !reconnectInfo.Cont {
+                log.Print( "reconnect -- ng session: ", sessionId )
+                return nil
+            }
             time.Sleep( timeout )
             if index < len( timeList ) - 1 {
                 index++
@@ -1608,7 +1641,9 @@ func ListenNewConnect(
     }
 
     for {
-        <-connInfo.releaseChan
+        if ! <-connInfo.SessionInfo.releaseChan {
+            break
+        }
         if !loop {
             break
         }

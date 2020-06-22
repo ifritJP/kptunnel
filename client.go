@@ -10,24 +10,25 @@ import (
 
 func connectTunnel(
     serverInfo HostInfo,
-    param *TunnelParam, forwardList []ForwardInfo ) ( *ConnInfo, []ForwardInfo, error) {
+    param *TunnelParam, forwardList []ForwardInfo ) ( []ForwardInfo, ReconnectInfo ) {
     log.Printf( "start client --- %d", serverInfo.Port )
     tunnel, err := net.Dial("tcp", fmt.Sprintf( "%s:%d", serverInfo.Name, serverInfo.Port ))
     if err != nil {
-        return nil, nil, fmt.Errorf("failed to connect -- %s", err)
+        return nil, ReconnectInfo{ nil, true, fmt.Errorf("failed to connect -- %s", err) }
     }
     log.Print( "connected to server" )
 
     connInfo := CreateConnInfo( tunnel, param.encPass, param.encCount, nil, false )
     overrideForwardList := forwardList
-    overrideForwardList, err = ProcessClientAuth( connInfo, param, forwardList )
+    cont := true
+    overrideForwardList, cont, err = ProcessClientAuth( connInfo, param, forwardList )
     if err != nil {
         connInfo.SessionInfo.SetState( Session_state_authmiss )
         log.Print(err)
         tunnel.Close()
-        return nil, nil, err
+        return nil, ReconnectInfo{ nil, cont, err }
     }
-    return connInfo, overrideForwardList, nil
+    return overrideForwardList, ReconnectInfo{ connInfo, true, err }
 }
 
 func StartClient( param *TunnelParam, forwardList []ForwardInfo ) {
@@ -36,20 +37,20 @@ func StartClient( param *TunnelParam, forwardList []ForwardInfo ) {
 
     for {
         sessionParam := *param
-        connInfo, _, err := connectTunnel(
+        _, reconnectInfo := connectTunnel(
             param.serverInfo, &sessionParam, forwardList )
-        if err != nil {
+        if reconnectInfo.Err != nil {
             break
         }
-        defer connInfo.Conn.Close()
+        defer reconnectInfo.Conn.Conn.Close()
 
         reconnect := CreateToReconnectFunc(
-            func( sessionInfo *SessionInfo ) (*ConnInfo, error) {
-                workConnInfo, _, err :=
+            func( sessionInfo *SessionInfo ) ReconnectInfo {
+                _, reconnectInfo :=
                     connectTunnel( param.serverInfo, &sessionParam, forwardList )
-                return workConnInfo, err
+                return reconnectInfo
             })
-        ListenNewConnect( listenGroup, connInfo, &sessionParam, true, reconnect )
+        ListenNewConnect( listenGroup, reconnectInfo.Conn, &sessionParam, true, reconnect )
     }
 }
 
@@ -57,19 +58,18 @@ func StartClient( param *TunnelParam, forwardList []ForwardInfo ) {
 func StartReverseClient( param *TunnelParam ) {
     for {
         sessionParam := *param
-        connInfo, _, err := connectTunnel( param.serverInfo, &sessionParam, nil )
-        if err != nil {
+        _, reconnectInfo := connectTunnel( param.serverInfo, &sessionParam, nil )
+        if reconnectInfo.Err != nil {
             break
         }
-        defer connInfo.Conn.Close()
+        defer reconnectInfo.Conn.Conn.Close()
 
         reconnect := CreateToReconnectFunc(
-            func( sessionInfo *SessionInfo ) (*ConnInfo, error) {
-                workConnInfo, _, err :=
-                    connectTunnel( param.serverInfo, &sessionParam, nil )
-                return workConnInfo, err
+            func( sessionInfo *SessionInfo ) ReconnectInfo {
+                _, reconnectInfo := connectTunnel( param.serverInfo, &sessionParam, nil )
+                return reconnectInfo
             })
-        NewConnectFromWith( connInfo, &sessionParam, reconnect )
+        NewConnectFromWith( reconnectInfo.Conn, &sessionParam, reconnect )
     }
 }
 
@@ -79,25 +79,25 @@ func StartWebSocketClient(
     serverInfo HostInfo, proxyHost string, forwardList []ForwardInfo ) {
 
     sessionParam := *param
-    connInfo, forwardList, err := ConnectWebScoket(
+    forwardList, reconnectInfo := ConnectWebScoket(
         serverInfo.toStr(), proxyHost, userAgent, &sessionParam, nil, forwardList )
-    if err != nil {
+    if reconnectInfo.Err != nil {
         return
     }
-    defer connInfo.Conn.Close()
+    defer reconnectInfo.Conn.Conn.Close()
 
     listenGroup := NewListen( forwardList )
     defer listenGroup.Close()
     
     
     reconnect := CreateToReconnectFunc(
-        func( sessionInfo *SessionInfo ) (*ConnInfo, error) {
-            workConnInfo, _, err := ConnectWebScoket(
+        func( sessionInfo *SessionInfo ) ReconnectInfo {
+            _, reconnectInfo := ConnectWebScoket(
                 serverInfo.toStr(), proxyHost, userAgent,
                 &sessionParam, sessionInfo, forwardList )
-            return workConnInfo, err
+            return reconnectInfo
         })
-    ListenNewConnect( listenGroup, connInfo, &sessionParam, true, reconnect )
+    ListenNewConnect( listenGroup, reconnectInfo.Conn, &sessionParam, true, reconnect )
 }
 
 func StartReverseWebSocketClient(
@@ -106,11 +106,11 @@ func StartReverseWebSocketClient(
     sessionParam := *param
 
     connect := CreateToReconnectFunc(
-        func( sessionInfo *SessionInfo ) (*ConnInfo, error) {
-            workConnInfo, _, err := ConnectWebScoket(
+        func( sessionInfo *SessionInfo ) ReconnectInfo {
+            _, reconnectInfo := ConnectWebScoket(
                 serverInfo.toStr(), proxyHost,
                 userAgent, &sessionParam, sessionInfo, nil )
-            return workConnInfo, err
+            return reconnectInfo
         })
 
     process := func() {

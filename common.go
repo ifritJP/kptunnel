@@ -413,7 +413,7 @@ type AuthResponse struct {
     // 
     Response string
     Hint string
-    SessionId int
+    SessionToken string
     WriteNo int64
     ReadNo int64
     Ctrl int
@@ -423,6 +423,7 @@ type AuthResponse struct {
 type AuthResult struct {
     Result string
     SessionId int
+    SessionToken string
     WriteNo int64
     ReadNo int64
     ForwardList []ForwardInfo
@@ -488,7 +489,7 @@ func ProcessServerAuth(
     if resp.Response != generateChallengeResponse(
         challenge.Challenge, param.pass, resp.Hint ) {
         // challenge-response が不一致なので、認証失敗
-        bytes, _ := json.Marshal( AuthResult{ "ng", 0, 0, 0, nil } )
+        bytes, _ := json.Marshal( AuthResult{ "ng", 0, "", 0, 0, nil } )
         if err := WriteItem(
             stream, CITIID_CTRL, bytes, connInfo.CryptCtrlObj, nil ); err != nil {
             return false, err
@@ -501,30 +502,35 @@ func ProcessServerAuth(
     // これ以降はクライアントが通知してきた情報を受けいれて OK
 
     // クライアントが送ってきた sessionId を取り入れる
-    sessionId := resp.SessionId
+    sessionToken := resp.SessionToken
     newSession := false
-    if sessionId == 0 {
-        // sessionId が 0 なら、新規セッション
+    if sessionToken == "" {
+        // sessionId が "" なら、新規セッション
         connInfo.SessionInfo = NewSessionInfo( true )
-        sessionId = connInfo.SessionInfo.SessionId
         newSession = true
     } else {
-        has := true
-        connInfo.SessionInfo, has = GetSessionInfo( sessionId )
-        if !has {
-            return false, fmt.Errorf( "not found session -- %d", sessionId )
+        if sessionInfo, has := GetSessionInfo( sessionToken ); !has {
+            mess := fmt.Sprintf( "not found session -- %d", sessionToken )
+            bytes, _ := json.Marshal( AuthResult{ "ng: " + mess, 0, "", 0, 0, nil } )
+            if err := WriteItem(
+                stream, CITIID_CTRL, bytes, connInfo.CryptCtrlObj, nil ); err != nil {
+                return false, err
+            }
+            return false, fmt.Errorf( mess )
+        } else {
+            connInfo.SessionInfo = sessionInfo
+            WaitPauseSession( connInfo.SessionInfo )
         }
-        WaitPauseSession( connInfo.SessionInfo )
     }
     log.Printf(
-        "sessionId: %d, ReadNo: %d(%d), WriteNo: %d(%d)",
-        sessionId, connInfo.SessionInfo.ReadNo, resp.WriteNo,
+        "sessionId: %s, ReadNo: %d(%d), WriteNo: %d(%d)",
+        sessionToken, connInfo.SessionInfo.ReadNo, resp.WriteNo,
         connInfo.SessionInfo.WriteNo, resp.ReadNo )
 
     // AuthResult を返す
     bytes, _ = json.Marshal(
         AuthResult{
-            "ok", sessionId,
+            "ok", connInfo.SessionInfo.SessionId, connInfo.SessionInfo.SessionToken,
             connInfo.SessionInfo.WriteNo, connInfo.SessionInfo.ReadNo, forwardList } )
     log.Printf( "forwardList -- %s", forwardList )
     if err := WriteItem(
@@ -629,29 +635,30 @@ func CorrectLackOffsetRead( stream io.Reader ) error {
 //
 // @param connInfo コネクション。再接続時はセッション情報をセットしておく。
 // @param param TunnelParam
-// @return error
+// @return bool エラー時に、処理を継続するかどうか。true の場合継続する。
+// @return error エラー
 func ProcessClientAuth(
     connInfo *ConnInfo, param *TunnelParam,
-    forwardList []ForwardInfo ) ([]ForwardInfo,error) {
+    forwardList []ForwardInfo ) ([]ForwardInfo,bool,error) {
 
     log.Print( "start auth" )
     
     stream := connInfo.Conn
 
     if err := CorrectLackOffsetRead( stream ); err != nil {
-        return nil, err
+        return nil, true, err
     }
     if err := CorrectLackOffsetWrite( stream ); err != nil {
-        return nil, err
+        return nil, true, err
     }
     
     
     magicItem, err := readItemForNormal( stream, connInfo.CryptCtrlObj )
     if err != nil {
-        return nil, err
+        return nil, true, err
     }
     if !bytes.Equal( magicItem.buf, []byte(param.magic) ) {
-        return nil, fmt.Errorf( "unmatch MAGIC %x", magicItem.buf )
+        return nil, true, fmt.Errorf( "unmatch MAGIC %x", magicItem.buf )
     }
 
     // challenge を読み込み、認証用パスワードから response を生成する
@@ -659,30 +666,30 @@ func ProcessClientAuth(
     reader, err = readItemWithReader( stream, connInfo.CryptCtrlObj )
     log.Print( "read challenge" )
     if err != nil {
-        return nil, err
+        return nil, true, err
     }
     var challenge AuthChallenge
     if err := json.NewDecoder( reader ).Decode( &challenge ); err != nil {
-        return nil, err
+        return nil, true, err
     }
     log.Print( "challenge ", challenge.Challenge )
     // サーバ側のモードを確認して、不整合がないかチェックする
     switch challenge.Mode {
     case "server":
         if param.Mode != "client" {
-            return nil, fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
+            return nil, false, fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
         }
     case "r-server":
         if param.Mode != "r-client" {
-            return nil, fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
+            return nil, false, fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
         }
     case "wsserver":
         if param.Mode != "wsclient" {
-            return nil, fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
+            return nil, false, fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
         }
     case "r-wsserver":
         if param.Mode != "r-wsclient" {
-            return nil, fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
+            return nil, false, fmt.Errorf( "unmatch mode -- %s", challenge.Mode )
         }
     }
 
@@ -695,12 +702,12 @@ func ProcessClientAuth(
     resp := generateChallengeResponse( challenge.Challenge, param.pass, hint )
     bytes, _ := json.Marshal(
         AuthResponse{
-            resp, hint, connInfo.SessionInfo.SessionId,
+            resp, hint, connInfo.SessionInfo.SessionToken,
             connInfo.SessionInfo.WriteNo,
             connInfo.SessionInfo.ReadNo, param.ctrl } )
     if err := WriteItem(
         stream, CITIID_CTRL, bytes, connInfo.CryptCtrlObj, nil ); err != nil {
-        return nil, err
+        return nil, true, err
     }
     connInfo.SessionInfo.SetState( Session_state_authresponse )
 
@@ -711,13 +718,13 @@ func ProcessClientAuth(
         log.Print( "read auth result" )
         reader, err := readItemWithReader( stream, connInfo.CryptCtrlObj )
         if err != nil {
-            return nil, err
+            return nil, true, err
         }
         if err := json.NewDecoder( reader ).Decode( &result ); err != nil {
-            return nil, err
+            return nil, true, err
         }
         if result.Result != "ok" {
-            return nil, fmt.Errorf( "failed to auth -- %s", result.Result )
+            return nil, false, fmt.Errorf( "failed to auth -- %s", result.Result )
         }
 
         log.Printf( "forwardList -- %s", result.ForwardList )
@@ -757,16 +764,16 @@ func ProcessClientAuth(
             for count := 0; count < BENCH_LOOP_COUNT; count++ {
                 if err := WriteItem(
                     stream, CITIID_CTRL, benchBuf, connInfo.CryptCtrlObj, nil ); err != nil {
-                    return nil, err
+                    return nil, false, err
                 }
                 if _,err := ReadItem(
                     stream, connInfo.CryptCtrlObj, benchBuf, heapCitiBuf ); err != nil  {
-                    return nil, err
+                    return nil, false, err
                 }
             }
             duration := time.Now().Sub( prev )
                         
-            return nil, fmt.Errorf( "benchmarck -- %s", duration )
+            return nil, false, fmt.Errorf( "benchmarck -- %s", duration )
         }
         
 
@@ -776,9 +783,10 @@ func ProcessClientAuth(
             if connInfo.SessionInfo.SessionId == 0 {
                 // 新規接続だった場合、セッション情報を更新する
                 //connInfo.SessionInfo.SessionId = result.SessionId
-                connInfo.SessionInfo.UpdateSessionId( result.SessionId )
+                connInfo.SessionInfo.UpdateSessionId(
+                    result.SessionId, result.SessionToken )
             } else {
-                return nil, fmt.Errorf(
+                return nil, false, fmt.Errorf(
                     "illegal sessionId -- %d, %d",
                     connInfo.SessionInfo.SessionId, result.SessionId )
             }
@@ -791,5 +799,5 @@ func ProcessClientAuth(
         connInfo.SessionInfo.SetReWrite( result.ReadNo )
     }
     
-    return result.ForwardList, nil
+    return result.ForwardList, true, nil
 }

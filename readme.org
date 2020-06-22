@@ -4,12 +4,120 @@
 
 #+TITLE: Tunnel/Reverse Tunnel over WebSocket and TCP/IP.
 
-The goal of this project is to master network control.
+* What's this tool.
 
-The following projects will be useful to most people.
+- TCP sessions inside the tunnel can hold connected
+  even if the tunnel connection will be  temporarily disconnected.
 
-https://github.com/jpillora/chisel
 
+* usage
+
+: $ kptunnel <mode> <server> [forwarding [forwarding [...]]] [options]
+
+- mode
+  - This argument sets following mode.
+  - for server
+    - wsserver
+    - r-wsserver
+    - server
+    - r-server
+  - for client
+    - wsclient
+    - r-wsclient
+    - client
+    - r-client
+  - The mode has the prefix "r-" is the reverse tunnel.
+  - The mode has the prefix "ws" is 'over websocket'.
+  - The mode does not has the prefix "ws" is to directly connect.
+    - The connection by tcp is experimental function.
+  - "r-", "ws" of the mode must match between client and server.
+- server
+  - This argument sets the listening port for the server,
+    or the port of server to connect from the client.
+  - This argument must set with following format.
+    - =[host]:port=
+    - e.g. localhost:1234  :1234
+
+- forwarding
+  - This argument sets the forwarding port.
+  - This option can set one or more.
+  - When the mode is the reverse tunnel, this argument must set from the server side.
+  - When the mode is the normal tunnel, this argument must set from the client side.
+  - This argument must set with following format.
+    - =[localhost]:local-port,serverhost:server-port=
+    - e.g. :20000,hoge.com:22
+  - 'serverhost' is sent directory widthout change to the server.
+    - When the forwarding is ':20000,localhost:22', this 'localhost' shows the server.
+  - When server side sets the forwarding, client side's forwarding is overridden.
+
+It shows the sample of the command.
+
+- server
+
+: $ kptunnel r-wsserver :6666 :8001,localhost:22 -pass XXXXXXX -encPass YYYYYYYY
+
+This command run following server.
+
+| option            | description                                            |
+|-------------------+--------------------------------------------------------|
+| r-wsserver        | run reverse websocket server                           |
+| :6666             | listen port 6666                                       |
+| :8001,localost:22 | forwarding from server's 8001 port to client's 22 port |
+| -pass             | authentication password XXXXXXX for client             |
+| -encPass          | password for the tunnel communication encryption       |
+  
+- client
+
+: $ kptunnel r-wsclient hoge.hoge.com:80 -proxy http://user:pass@proxy.hoge.com:8080/ -pass XXXXXXX -encPass YYYYYYYY
+
+This command run following client.
+
+| option           | description                                                                     |
+|------------------+---------------------------------------------------------------------------------|
+| r-wsclient       | run reverse websocket client                                                    |
+| hoge.hoge.com:80 | connect to hoge.hoge.com:80 port                                                |
+| -proxy           | connect via proxy http://proxy.hoge.com::8080/ and authenticate with user, pass |
+| -pass            | authentication password XXXXXXX for client                                      |
+| -encPass         | password for the tunnel communication encryption                                |
+  
+- connect to tunnel
+
+Above-described samples construct reverse tunnel forwarding from server's 8001 port to client's 22 port.
+To run following command at the server side, it can connect to ssh of client side.
+
+: $ ssh -p 8001 localhost
+  
+*** option list
+
+**** basic 
+
+- -proxy string
+  - This option set the proxy to connect websocket server.
+  - When the proxy needs auth, it sets with following format.
+    - http://user:pass@proxy.hoge.com:port/ 
+  - This tool only supports HTTP proxy.
+  - This option is valid for client side.
+- -UA string
+  - This option set the user-agent to connect to the proxy.
+  - This option is valid for client side.
+
+**** security
+    
+- -pass string
+  - This option sets password for the client authentication.
+  - This password must set same password at the client and the server.
+- -encPass string
+  - This option sets the password for the tunnel communication encryption.
+  - This password must set same password at the client and the server.
+- -encCount int
+  - This option sets the count for the tunnel communication encryption.  (default -1)
+    - -1 : infinity
+    - 0 : plain, no encrypt.
+    - N > 0 : packet count
+- -ip string
+  - This option sets the IP address range that can connect to the server.
+  - When this option is omitted, the server does not limit IP address of the client.
+  
 
 * demo
 
