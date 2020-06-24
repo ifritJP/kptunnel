@@ -3,6 +3,7 @@ package main
 import "flag"
 import "fmt"
 import "os"
+import "bufio"
 import "os/signal"
 import "time"
 import "strings"
@@ -344,4 +345,12 @@ func setsignal() {
 }
 
 func test() {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		fmt.Println(scanner.Text()) // Println will add back the final '\n'
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, "reading standard input:", err)
+	}
 }
+
