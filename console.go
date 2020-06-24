@@ -28,7 +28,7 @@ func StartConsole( hostInfo HostInfo ) {
 		if err != nil {
 			log.Fatal(err)
 		}
-        log.Print("connected")
+        log.Print("console connected")
         go func(stream net.Conn) {
             defer stream.Close()
             ConsoleService( stream )

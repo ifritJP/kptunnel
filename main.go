@@ -3,8 +3,8 @@ package main
 import "flag"
 import "fmt"
 import "os"
-import "net"
-//import "bytes"
+import "os/signal"
+import "time"
 import "strings"
 import "strconv"
 import "net/url"
@@ -102,6 +102,8 @@ func main() {
             ParseOptEcho( mode, cmd.Args()[1:] )
         case "heavy":
             ParseOptHeavy( mode, cmd.Args()[1:] )
+        case "bot":
+            ParseOptBot( mode, cmd.Args()[1:] )
         case "test":
             test()
         }
@@ -320,10 +322,26 @@ func ParseOptHeavy( mode string, args []string ) {
     StartHeavyClient( param.serverInfo )
 }
 
+func ParseOptBot( mode string, args []string ) {
+    var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+    param, _ := ParseOpt( cmd, mode, args )
+
+    StartBotServer( param.serverInfo )
+}
+
+func setsignal() {
+    sigchan := make( chan os.Signal )
+    signal.Notify( sigchan, os.Interrupt )
+    fmt.Print( "wait sig" )
+    <-sigchan
+    fmt.Print( "detect sig" )
+    signal.Stop( sigchan )
+
+    for {
+        time.Sleep( time.Second )
+        fmt.Print( "hoge" )
+    }
+}
 
 func test() {
-    addr := net.ParseIP( "192.168.0.1" )
-    mask := net.CIDRMask( 20, 32 )
-    fmt.Printf( "%s, %s\n", addr.String(),
-        addr.Mask( mask ).Equal( net.ParseIP( "192.168.0.0" ) ) )
 }

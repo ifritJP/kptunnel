@@ -17,6 +17,21 @@ import (
     "bytes"
 )
 
+type Lock struct {
+    mutex sync.Mutex
+    owner string
+}
+
+func (lock *Lock) get( name string ) {
+    lock.mutex.Lock()
+    lock.owner = name
+}
+
+func (lock *Lock) rel() {
+    lock.owner = ""
+    lock.mutex.Unlock()
+}
+
 // tunnel 上に通す tcp の組み合わせ
 type ForwardInfo struct {
     // listen する host:port
@@ -224,6 +239,9 @@ type SessionInfo struct {
     reconnetWaitState int
 
     releaseChan chan bool
+
+    // この構造体のメンバアクセス排他用 mutex
+    mutex *Lock
 }
 
 func (sessionInfo *SessionInfo) GetPacketBuf( citiId uint32, packSize uint16 ) []byte {
@@ -283,6 +301,7 @@ func newEmptySessionInfo(
         writeState:0,
         reconnetWaitState: 0,
         releaseChan: make( chan bool, 10 ),
+        mutex: &Lock{},
     }
 
     sessionInfo.Setup()
@@ -290,13 +309,18 @@ func newEmptySessionInfo(
 }
 
 func DumpSession( stream io.Writer ) {
-    sessionMgr.mutex.Lock()
-    defer sessionMgr.mutex.Unlock()
+    fmt.Fprintf( stream, "before sessionMgr.mutex: %s\n", sessionMgr.mutex.owner )
+    
+    sessionMgr.mutex.get( "DumpSession" )
+    defer sessionMgr.mutex.rel()
 
+    fmt.Fprintf( stream, "------------\n")
+    fmt.Fprintf( stream, "sessionMgr.mutex: %s\n", sessionMgr.mutex.owner )
     for _, sessionInfo := range( sessionMgr.sessionToken2info ) {
         fmt.Fprintf( stream, "sessionId: %d\n", sessionInfo.SessionId )
         fmt.Fprintf( stream, "token: %s\n", sessionInfo.SessionToken )
         fmt.Fprintf( stream, "state: %s\n", sessionInfo.state )
+        fmt.Fprintf( stream, "mutex onwer: %s\n", sessionInfo.mutex.owner )
         fmt.Fprintf(
             stream, "WriteNo, ReadNo: %d %d\n",
             sessionInfo.WriteNo, sessionInfo.ReadNo )
@@ -313,7 +337,7 @@ func DumpSession( stream io.Writer ) {
 
         for _, citi := range( sessionInfo.citiId2Info ) {
             fmt.Fprintf( stream, "======\n" )
-            fmt.Fprintf( stream, "citiId: %d\n", citi.citiId )
+            fmt.Fprintf( stream, "citiId: %d-%d\n", sessionInfo.SessionId, citi.citiId )
             fmt.Fprintf(
                 stream, "readState %d, writeState %d\n",
                 citi.ReadState, citi.WriteState )
@@ -323,15 +347,15 @@ func DumpSession( stream io.Writer ) {
         }
 
 
-        fmt.Fprintf( stream, "------------\n");
+        fmt.Fprintf( stream, "------------\n")
     }
 }
 
 var nextSessionId = 0
 func NewSessionInfo( isTunnelServer bool ) *SessionInfo {
-    sessionMgr.mutex.Lock()
-    defer sessionMgr.mutex.Unlock()
-
+    sessionMgr.mutex.get( "NewSessionInfo" )
+    defer sessionMgr.mutex.rel()
+    
     nextSessionId++
     
 	randbin := make([]byte, 9)
@@ -346,8 +370,8 @@ func NewSessionInfo( isTunnelServer bool ) *SessionInfo {
 }
 
 func (sessionInfo *SessionInfo) UpdateSessionId(sessionId int, token string) {
-    sessionMgr.mutex.Lock()
-    defer sessionMgr.mutex.Unlock()
+    sessionMgr.mutex.get( "UpdateSessionId" )
+    defer sessionMgr.mutex.rel()
     
     sessionInfo.SessionId = sessionId
     sessionInfo.SessionToken = token
@@ -391,8 +415,8 @@ func (sessionInfo *SessionInfo) getHeader() *ConnHeader {
 }
 
 func (info *SessionInfo) addCiti( conn io.ReadWriteCloser, citiId uint32 ) *ConnInTunnelInfo {
-    sessionMgr.mutex.Lock()
-    defer sessionMgr.mutex.Unlock()
+    sessionMgr.mutex.get( "addCiti" )
+    defer sessionMgr.mutex.rel()
     
     if citiId == CITIID_CTRL {
         citiId = info.nextCtitId
@@ -414,8 +438,8 @@ func (info *SessionInfo) addCiti( conn io.ReadWriteCloser, citiId uint32 ) *Conn
 }
 
 func (info *SessionInfo) getCiti( citiId uint32 ) *ConnInTunnelInfo {
-    sessionMgr.mutex.Lock()
-    defer sessionMgr.mutex.Unlock()
+    sessionMgr.mutex.get( "getCiti" )
+    defer sessionMgr.mutex.rel()
 
     if citi, has := info.citiId2Info[ citiId ]; has {
         return citi
@@ -424,8 +448,8 @@ func (info *SessionInfo) getCiti( citiId uint32 ) *ConnInTunnelInfo {
 }
 
 func (info *SessionInfo) delCiti( citi *ConnInTunnelInfo ) {
-    sessionMgr.mutex.Lock()
-    defer sessionMgr.mutex.Unlock()
+    sessionMgr.mutex.get( "delCiti" )
+    defer sessionMgr.mutex.rel()
 
     delete( info.citiId2Info, citi.citiId )
 
@@ -440,8 +464,8 @@ func (info *SessionInfo) delCiti( citi *ConnInTunnelInfo ) {
 }
 
 func (info *SessionInfo) hasCiti() bool {
-    sessionMgr.mutex.Lock()
-    defer sessionMgr.mutex.Unlock()
+    sessionMgr.mutex.get( "hasCiti" )
+    defer sessionMgr.mutex.rel()
 
     log.Printf( "hasCiti -- %d %d", info.SessionId, len( info.citiId2Info ) )
 
@@ -510,7 +534,7 @@ type sessionManager struct {
     // channel を使った方がスマートに出来そうな気がする。。
     conn2alive map[io.ReadWriteCloser] bool
     // sessionManager 内の値にアクセスする際の mutex
-    mutex *sync.Mutex
+    mutex Lock
 }
 
 var sessionMgr = sessionManager{
@@ -518,14 +542,14 @@ var sessionMgr = sessionManager{
     map[int] *ConnInfo{},
     map[int] *pipeInfo{},
     map[io.ReadWriteCloser] bool{},
-    new( sync.Mutex ) }
+    Lock{} }
 
 // 指定のコネクションをセッション管理に登録する
 func SetSessionConn( connInfo *ConnInfo ) {
     sessionId := connInfo.SessionInfo.SessionId
     log.Print( "SetSessionConn: sessionId -- ", sessionId )
-    sessionMgr.mutex.Lock()
-    defer sessionMgr.mutex.Unlock()
+    sessionMgr.mutex.get( "SetSessionConn" )
+    defer sessionMgr.mutex.rel()
 
     sessionMgr.sessionId2conn[ connInfo.SessionInfo.SessionId ] = connInfo
     sessionMgr.conn2alive[ connInfo.Conn ] = true
@@ -533,8 +557,8 @@ func SetSessionConn( connInfo *ConnInfo ) {
 
 // 指定のセッション token  に紐付けられた SessionInfo を取得する
 func GetSessionInfo( token string ) (*SessionInfo, bool) {
-    sessionMgr.mutex.Lock()
-    defer sessionMgr.mutex.Unlock()
+    sessionMgr.mutex.get( "GetSessionInfo" )
+    defer sessionMgr.mutex.rel()
 
     sessionInfo, has := sessionMgr.sessionToken2info[ token ]
     return sessionInfo, has
@@ -545,8 +569,8 @@ func JoinUntilToCloseConn( conn io.ReadWriteCloser ) {
     log.Printf( "join start -- %v\n", conn )
 
     isAlive := func() bool {
-        sessionMgr.mutex.Lock()
-        defer sessionMgr.mutex.Unlock()
+        sessionMgr.mutex.get( "JoinUntilToCloseConn" )
+        defer sessionMgr.mutex.rel()
         
         if alive, has := sessionMgr.conn2alive[ conn ]; has && alive {
             return true
@@ -578,8 +602,6 @@ type pipeInfo struct {
     //     再接続のリトライは、この関数内で行なう。
     //     この関数で nil を返すと、再接続を諦める。
     reconnectFunc func(sessionInfo *SessionInfo) *ConnInfo
-    // この構造体のメンバアクセス排他用 mutex
-    mutex *sync.Mutex
     // この Tunnel 接続を終了するべき時に true
     end bool
     // // 中継処理終了待合せ用 channel
@@ -707,20 +729,23 @@ func (info *ConnInfo) readData( work []byte ) (*PackItem, error) {
 // @return int 再接続後のリビジョン
 // @return bool セッションを終了するかどうか。終了する場合 true
 func (info *pipeInfo) reconnect( txt string, rev int ) (*ConnInfo,int,bool) {
-    info.mutex.Lock()
-    workRev := info.rev
-    workConnInfo := info.connInfo
-    sessionInfo := info.connInfo.SessionInfo
-    sessionInfo.reconnetWaitState++
-    info.mutex.Unlock()
 
+    workRev, workConnInfo := info.getConn()
+    sessionInfo := info.connInfo.SessionInfo
+
+    
+    sessionInfo.mutex.get( "reconnect" )
+    sessionInfo.reconnetWaitState++
+    sessionInfo.mutex.rel()
+    
+    
     log.Printf( "reconnect -- rev: %s, %d %d, %p", txt, rev, workRev, workConnInfo )
 
     reqConnect := false
 
     sub := func() bool {
-        info.mutex.Lock()
-        defer info.mutex.Unlock()
+        sessionInfo.mutex.get( "reconnect-sub" )
+        defer sessionInfo.mutex.rel()
         
         if info.rev != rev {
             if !info.connecting {
@@ -780,8 +805,8 @@ func (info *pipeInfo) reconnect( txt string, rev int ) (*ConnInfo,int,bool) {
             workConnInfo = info.connInfo
 
             func() {
-                info.mutex.Lock()
-                defer info.mutex.Unlock()
+                sessionInfo.mutex.get( "reconnectFunc-end" )
+                defer sessionInfo.mutex.rel()
                 sessionInfo.reconnetWaitState--
             }()
             
@@ -798,8 +823,8 @@ func (info *pipeInfo) reconnect( txt string, rev int ) (*ConnInfo,int,bool) {
 // セッションのコネクションを開放する
 func releaseSessionConn( connInfo *ConnInfo ) {
     log.Printf( "releaseSessionConn -- %d", connInfo.SessionInfo.SessionId )
-    sessionMgr.mutex.Lock()
-    defer sessionMgr.mutex.Unlock()
+    sessionMgr.mutex.get( "releaseSessionConn" )
+    defer sessionMgr.mutex.rel()
 
     delete( sessionMgr.conn2alive, connInfo.Conn )
     delete( sessionMgr.sessionId2conn, connInfo.SessionInfo.SessionId )
@@ -815,8 +840,8 @@ func GetSessionConn( sessionInfo *SessionInfo ) *ConnInfo {
     log.Print( "GetSessionConn ... session: ", sessionId )
 
     sub := func() *ConnInfo {
-        sessionMgr.mutex.Lock()
-        defer sessionMgr.mutex.Unlock()
+        sessionMgr.mutex.get( "GetSessionConn-sub" )
+        defer sessionMgr.mutex.rel()
 
         if connInfo, has := sessionMgr.sessionId2conn[ sessionId ]; has {
             return connInfo
@@ -842,8 +867,8 @@ func GetSessionConn( sessionInfo *SessionInfo ) *ConnInfo {
 func WaitPauseSession( sessionInfo *SessionInfo ) bool {
     log.Print( "WaitPauseSession start ... session: ", sessionInfo.SessionId )
     sub := func() bool {
-        sessionMgr.mutex.Lock()
-        defer sessionMgr.mutex.Unlock()
+        sessionMgr.mutex.get( "WaitPauseSession-sub" )
+        defer sessionMgr.mutex.rel()
 
         return sessionInfo.reconnetWaitState == 2
     }
@@ -863,8 +888,9 @@ func WaitPauseSession( sessionInfo *SessionInfo ) bool {
 // @return int リビジョン情報
 // @return *ConnInfo コネクション情報
 func (info *pipeInfo) getConn() (int, *ConnInfo) {
-    info.mutex.Lock()
-    defer info.mutex.Unlock()
+    sessionInfo := info.connInfo.SessionInfo
+    sessionInfo.mutex.get( "getConn" )
+    defer sessionInfo.mutex.rel()
 
     return info.rev, info.connInfo
 }
@@ -1395,8 +1421,8 @@ func NewPipeInfo(
     connInfo *ConnInfo, citServerFlag bool,
     reconnect func( sessionInfo *SessionInfo ) *ConnInfo ) (*pipeInfo, bool) {
     
-    sessionMgr.mutex.Lock()
-    defer sessionMgr.mutex.Unlock()
+    sessionMgr.mutex.get( "NewPipeInfo" )
+    defer sessionMgr.mutex.rel()
 
     sessionInfo := connInfo.SessionInfo
     
@@ -1406,7 +1432,7 @@ func NewPipeInfo(
     }
 
     info = &pipeInfo{
-        0, reconnect, new( sync.Mutex ), false, false, connInfo,
+        0, reconnect, false, false, connInfo,
         make( chan bool ), make(chan bool), citServerFlag }
     sessionMgr.sessionId2pipe[ sessionInfo.SessionId ] = info
 

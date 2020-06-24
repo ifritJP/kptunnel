@@ -10,6 +10,43 @@ import (
     "golang.org/x/net/websocket"
 )
 
+func StartBotServer( serverInfo HostInfo ) {
+    server := serverInfo.toStr()
+    log.Print( "start echo --- ", server )
+	local, err := net.Listen("tcp", server )
+	if err != nil {
+		log.Fatal( err )
+	}
+	defer local.Close()
+	for {
+		conn, err := local.Accept()
+		if err != nil {
+			log.Fatal(err)
+		}
+        log.Print("connected")
+        bot := func() {
+            for {
+                if _, err := conn.Write( []byte("hello\n") ); err != nil {
+                    break
+                }
+                time.Sleep( 2 * time.Second )
+            }
+        }
+        reader := func() {
+            buf := make( []byte, 1000 )
+            for {
+                if length, err := conn.Read( buf ); err != nil {
+                    break
+                } else {
+                    conn.Write( []byte(fmt.Sprintf( "rep: %s", buf[:length]) ) )
+                }
+            }
+        }
+        go bot()
+        go reader()
+	}
+}
+
 func StartEchoServer( serverInfo HostInfo ) {
     server := serverInfo.toStr()
     log.Print( "start echo --- ", server )
