@@ -257,7 +257,6 @@ func (sessionInfo *SessionInfo) GetPacketBuf( citiId uint32, packSize uint16 ) [
     return make([]byte,packSize)
 }
 
-
 func (sessionInfo *SessionInfo) SetState(state string) {
     sessionInfo.state = state
 }
@@ -300,7 +299,7 @@ func newEmptySessionInfo(
         readState:0,
         writeState:0,
         reconnetWaitState: 0,
-        releaseChan: make( chan bool, 10 ),
+        releaseChan: make( chan bool, 3 ),
         mutex: &Lock{},
     }
 
@@ -327,6 +326,7 @@ func DumpSession( stream io.Writer ) {
         fmt.Fprintf( stream, "packChan: %d\n", len( sessionInfo.packChan ) )
         fmt.Fprintf( stream, "packChanEnc: %d\n", len( sessionInfo.packChanEnc ) )
         fmt.Fprintf( stream, "encSyncChan: %d\n", len( sessionInfo.encSyncChan ) )
+        fmt.Fprintf( stream, "releaseChan: %d\n", len( sessionInfo.releaseChan ) )
         fmt.Fprintf(
             stream, "writeSize, ReadSize: %d, %d\n",
             sessionInfo.wroteSize, sessionInfo.readSize )
@@ -617,6 +617,16 @@ type pipeInfo struct {
     citServerFlag bool
 }
 
+func (info *pipeInfo) sendRelease() {
+    if info.citServerFlag {
+        releaseChan := info.connInfo.SessionInfo.releaseChan
+        if len( releaseChan ) == 0 {
+            releaseChan <- true
+        }
+    }
+}
+
+
 type PackInfo struct {
     // 書き込みデータ
     bytes []byte
@@ -777,7 +787,7 @@ func (info *pipeInfo) reconnect( txt string, rev int ) (*ConnInfo,int,bool) {
     }
     
     if reqConnect {
-        releaseSessionConn( info.connInfo )
+        releaseSessionConn( info )
         prepareClose( info )
 
         if len( sessionInfo.packChan ) == 0 {
@@ -821,7 +831,8 @@ func (info *pipeInfo) reconnect( txt string, rev int ) (*ConnInfo,int,bool) {
 }
 
 // セッションのコネクションを開放する
-func releaseSessionConn( connInfo *ConnInfo ) {
+func releaseSessionConn( info *pipeInfo ) {
+    connInfo := info.connInfo
     log.Printf( "releaseSessionConn -- %d", connInfo.SessionInfo.SessionId )
     sessionMgr.mutex.get( "releaseSessionConn" )
     defer sessionMgr.mutex.rel()
@@ -830,8 +841,8 @@ func releaseSessionConn( connInfo *ConnInfo ) {
     delete( sessionMgr.sessionId2conn, connInfo.SessionInfo.SessionId )
 
     connInfo.Conn.Close()
-    
-    connInfo.SessionInfo.releaseChan <- true
+
+    info.sendRelease()
 }
 
 // 指定のセッションに対応するコネクションを取得する
@@ -1182,7 +1193,7 @@ func packetReader( info *pipeInfo ) {
             }
             sessionInfo.readState = 50
             if info.end {
-                sessionInfo.releaseChan <- false
+                info.sendRelease()
                 for _, workciti := range(sessionInfo.citiId2Info) {
                     if len( workciti.syncChan ) == 0 {
                         // 終了する際に、 stream2Tunnel() 側が待ちになっている可能性があるので
