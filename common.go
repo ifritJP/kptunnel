@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"time"
 	"unsafe"
 
@@ -409,6 +410,7 @@ const BENCH_LOOP_COUNT = 200
 
 const CTRL_NONE = 0
 const CTRL_BENCH = 1
+const CTRL_STOP = 2
 
 // client -> server
 type AuthResponse struct {
@@ -558,6 +560,10 @@ func ProcessServerAuth(
 		}
 		return false, fmt.Errorf("benchmarck")
 	}
+	if resp.Ctrl == CTRL_STOP {
+		log.Print("receive the stop request")
+		os.Exit(0)
+	}
 
 	SetSessionConn(connInfo)
 	// if !newSession {
@@ -672,19 +678,19 @@ func ProcessClientAuth(
 	// サーバ側のモードを確認して、不整合がないかチェックする
 	switch challenge.Mode {
 	case "server":
-		if param.Mode != "client" {
+		if param.Mode != "client" && param.Mode != "wsclient" {
 			return nil, false, fmt.Errorf("unmatch mode -- %s", challenge.Mode)
 		}
 	case "r-server":
-		if param.Mode != "r-client" {
+		if param.Mode != "r-client" && param.Mode != "r-wsclient" {
 			return nil, false, fmt.Errorf("unmatch mode -- %s", challenge.Mode)
 		}
 	case "wsserver":
-		if param.Mode != "wsclient" {
+		if param.Mode != "client" && param.Mode != "wsclient" {
 			return nil, false, fmt.Errorf("unmatch mode -- %s", challenge.Mode)
 		}
 	case "r-wsserver":
-		if param.Mode != "r-wsclient" {
+		if param.Mode != "r-client" && param.Mode != "r-wsclient" {
 			return nil, false, fmt.Errorf("unmatch mode -- %s", challenge.Mode)
 		}
 	}
@@ -767,6 +773,9 @@ func ProcessClientAuth(
 			duration := time.Now().Sub(prev)
 
 			return nil, false, fmt.Errorf("benchmarck -- %s", duration)
+		}
+		if param.ctrl == CTRL_STOP {
+			os.Exit(0)
 		}
 
 		if result.SessionId != connInfo.SessionInfo.SessionId {

@@ -189,7 +189,7 @@ func StartReverseServer(param *TunnelParam, forwardList []ForwardInfo) {
 	defer listenGroup.Close()
 
 	for {
-		go listenTcpServer(local, param, forwardList,
+		listenTcpServer(local, param, forwardList,
 			func(connInfo *ConnInfo) {
 				ListenNewConnect(
 					listenGroup, connInfo, param, false, GetSessionConn)
@@ -202,8 +202,10 @@ type WrapWSHandler struct {
 	param  *TunnelParam
 }
 
+// Http ハンドラ
 func (handler WrapWSHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
+	// 接続元の確認
 	if err := AcceptClient(req.RemoteAddr, handler.param); err != nil {
 		log.Printf("reject -- %s", err)
 		w.WriteHeader(http.StatusNotAcceptable)
@@ -214,16 +216,22 @@ func (handler WrapWSHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	defer ReleaseClient(req.RemoteAddr)
 
 	wrap := func(ws *websocket.Conn) {
+		// WrapWSHandler のハンドラを実行する
 		handler.handle(ws, req.RemoteAddr)
 	}
 
+	// Http Request の WebSocket サーバ処理生成。
+	// wrap を実行するように生成する。
 	wshandler := websocket.Handler(wrap)
+	// WebSocket サーバハンドル処理。
 	wshandler.ServeHTTP(w, req)
 }
 
 func execWebSocketServer(
 	param TunnelParam, forwardList []ForwardInfo,
 	connectSession func(conn *ConnInfo, param *TunnelParam)) {
+
+	// WebSocket 接続時のハンドラ
 	handle := func(ws *websocket.Conn, remoteAddr string) {
 		connInfo := CreateConnInfo(ws, param.encPass, param.encCount, nil, true)
 		if newSession, err := ProcessServerAuth(

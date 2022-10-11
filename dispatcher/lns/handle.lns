@@ -1,0 +1,20 @@
+pub class ReqTunnelInfo {
+   let statusCode:int {pub};
+   let message:str {pub};
+   let host:str {pub};
+   let port:int {pub};
+   let tunnelArgList:&List<str> {pub};
+}
+
+let mut port = 10000;
+
+pub fn canAcceptRequest( uri:str, headerMap:&Map<str,&List<str>> ) : &ReqTunnelInfo {
+   port = port + 1;
+   
+   return new ReqTunnelInfo(
+      200, "", "localhost", port,
+      [ "../kptunnel", "r-server", ":%d" (port), ":20000,:22" ] );
+}
+
+pub fn onEndTunnel( tunnelInfo:&ReqTunnelInfo ) {
+}

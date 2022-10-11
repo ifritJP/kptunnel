@@ -16,7 +16,7 @@ import (
 	_ "net/http/pprof"
 )
 
-const VERSION = "0.0.1"
+const VERSION = "0.1.0"
 
 // 2byte の MAX。
 // ここを 65535 より大きくする場合は、WriteItem, ReadItem の処理を変更する。
@@ -137,7 +137,7 @@ func ParseOpt(
   N: packet count`)
 	ipPattern := cmd.String("ip", "", "allow ip range (192.168.0.1/24)")
 	interval := cmd.Int("int", 20, "keep alive interval")
-	ctrl := cmd.String("ctrl", "", "[bench]")
+	ctrl := cmd.String("ctrl", "", "[bench][stop]")
 	prof := cmd.String("prof", "", "profile port. (:1234)")
 	console := cmd.String("console", "", "console port. (:1234)")
 	verbose := cmd.Bool("verbose", false, "verbose. (true or false)")
@@ -219,6 +219,9 @@ func ParseOpt(
 		getKey(magic), 0, *serverInfo}
 	if *ctrl == "bench" {
 		param.ctrl = CTRL_BENCH
+	}
+	if *ctrl == "stop" {
+		param.ctrl = CTRL_STOP
 	}
 
 	if *prof != "" {
