@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -120,7 +121,7 @@ func main() {
 }
 
 func ParseOpt(
-	cmd *flag.FlagSet, mode string, args []string) (*TunnelParam, []ForwardInfo) {
+	cmd *flag.FlagSet, mode string, args []string) (*TunnelParam, []ForwardInfo, func()) {
 
 	needForward := false
 	if mode == "r-server" || mode == "r-wsserver" ||
@@ -216,7 +217,7 @@ func ParseOpt(
 
 	param := TunnelParam{
 		pass, mode, maskIP, encPass, *encCount, *interval * 1000,
-		getKey(magic), 0, *serverInfo}
+		getKey(magic), 0, *serverInfo, http.Header{}}
 	if *ctrl == "bench" {
 		param.ctrl = CTRL_BENCH
 	}
@@ -269,12 +270,12 @@ func ParseOpt(
 		}
 	}
 
-	return &param, forwardList
+	return &param, forwardList, usage
 }
 
 func ParseOptServer(mode string, args []string) {
 	var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	param, forwardList := ParseOpt(cmd, mode, args)
+	param, forwardList, _ := ParseOpt(cmd, mode, args)
 
 	switch mode {
 	case "server":
@@ -293,9 +294,18 @@ func ParseOptClient(mode string, args []string) {
 	userAgent := cmd.String("UA", "Go Http Client", "user agent for websocket")
 	proxyHost := cmd.String("proxy", "", "proxy server")
 	wsPath := cmd.String("wspath", "/", "websocket path")
+	header := cmd.String("header", "", "http header. ex, 'NAME: VAL'")
 	tlsFlag := cmd.Bool("tls", false, "connect on tls")
 
-	param, forwardList := ParseOpt(cmd, mode, args)
+	param, forwardList, usage := ParseOpt(cmd, mode, args)
+	if *header != "" {
+		token := regexp.MustCompile(":").Split(*header, 2)
+		if len(token) == 2 {
+			param.wsReqHeader.Add(token[0], token[1])
+		} else {
+			usage()
+		}
+	}
 
 	schema := "ws://"
 	if *tlsFlag {
@@ -319,21 +329,21 @@ func ParseOptClient(mode string, args []string) {
 
 func ParseOptEcho(mode string, args []string) {
 	var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	param, _ := ParseOpt(cmd, mode, args)
+	param, _, _ := ParseOpt(cmd, mode, args)
 
 	StartEchoServer(param.serverInfo)
 }
 
 func ParseOptHeavy(mode string, args []string) {
 	var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	param, _ := ParseOpt(cmd, mode, args)
+	param, _, _ := ParseOpt(cmd, mode, args)
 
 	StartHeavyClient(param.serverInfo)
 }
 
 func ParseOptBot(mode string, args []string) {
 	var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	param, _ := ParseOpt(cmd, mode, args)
+	param, _, _ := ParseOpt(cmd, mode, args)
 
 	StartBotServer(param.serverInfo)
 }

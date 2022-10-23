@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 
 	//"regexp"
 	"bytes"
@@ -66,6 +67,8 @@ type TunnelParam struct {
 	ctrl int
 	// サーバ情報
 	serverInfo HostInfo
+	// websocket のリクエストヘッダに付加する情報
+	wsReqHeader http.Header
 }
 
 // セッションの再接続時に、

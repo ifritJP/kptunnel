@@ -162,7 +162,7 @@ func listenTcpServer(
 }
 
 func StartServer(param *TunnelParam, forwardList []ForwardInfo) {
-	log.Print("wating --- ", param.serverInfo.toStr())
+	log.Print("waiting --- ", param.serverInfo.toStr())
 	local, err := net.Listen("tcp", param.serverInfo.toStr())
 	if err != nil {
 		log.Fatal(err)
@@ -178,7 +178,7 @@ func StartServer(param *TunnelParam, forwardList []ForwardInfo) {
 }
 
 func StartReverseServer(param *TunnelParam, forwardList []ForwardInfo) {
-	log.Print("wating reverse --- ", param.serverInfo.toStr())
+	log.Print("waiting reverse --- ", param.serverInfo.toStr())
 	local, err := net.Listen("tcp", param.serverInfo.toStr())
 	if err != nil {
 		log.Fatal(err)
@@ -214,6 +214,8 @@ func (handler WrapWSHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	defer ReleaseClient(req.RemoteAddr)
+
+	log.Printf("accept -- %v", req)
 
 	wrap := func(ws *websocket.Conn) {
 		// WrapWSHandler のハンドラを実行する

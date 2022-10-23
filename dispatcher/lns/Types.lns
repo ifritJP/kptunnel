@@ -1,0 +1,17 @@
+pub class ReqTunnelInfo extend (Mapping) {
+   let host:str {pub};
+   let port:int {pub};
+   let mode:str {pub};
+   let tunnelArgList:&List<str> {pub};
+}
+
+pub interface HandleIF {
+   pub fn getTunnelInfo( uri:str, headerMap:&Map<str,&List<str>> ) __noasync mut : &ReqTunnelInfo;
+   pub fn onEndTunnel( tunnelInfo:&ReqTunnelInfo ) __noasync mut;
+}
+
+pub form CreateHandlerFunc(): HandleIF;
+
+pub interface AsyncHandleIF {
+   pub fn canAccept( uri:str, headerMap:&Map<str,&List<str>> ) __async mut : int, str;
+}

@@ -1,0 +1,19 @@
+import lns.Types;
+
+pub class AsyncHandle extend (Types.AsyncHandleIF) {
+   pub fn canAccept( uri:str, headerMap:&Map<str,&List<str>> ) __async mut : int, str {
+      print( __func__, "url", uri );
+      foreach valList, key in headerMap {
+         foreach val in valList {
+            print( __func__, "header", "%s: %s" ( key, val ) );
+         }
+      }
+      return 200, "";
+   }
+}
+
+pub fn createHandler() : AsyncHandle {
+   let mut handler = new AsyncHandle();
+   print( __func__, handler );
+   return handler;
+}

@@ -121,6 +121,12 @@ func ConnectWebScoket(
 		log.Print("NewConfig error", err)
 		return nil, ReconnectInfo{nil, true, err}
 	}
+	for key, list := range param.wsReqHeader {
+		for _, val := range list {
+			conf.Header.Add(key, val)
+		}
+	}
+
 	if strings.Index(websocketUrl, "wss") == 0 {
 		// とりあえず tls の検証を skip する
 		conf.TlsConfig = &tls.Config{

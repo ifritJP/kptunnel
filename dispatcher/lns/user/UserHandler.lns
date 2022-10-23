@@ -1,0 +1,38 @@
+import lns.Types;
+
+pub class UserHandler extend (Types.HandleIF) {
+   let mut port:int;
+   local fn __init() {
+      self.port = 10000;
+   }
+
+   pub fn getTunnelInfo(
+      uri:str, headerMap:&Map<str,&List<str>> ) mut : &Types.ReqTunnelInfo
+   {
+      print( __func__ );
+      self.port = self.port + 1;
+
+      // return new ReqTunnelInfo( 400, "hoge error", "", 0, "", [] );
+      
+      print( __func__, "url", uri );
+      foreach valList, key in headerMap {
+         foreach val in valList {
+            print( __func__, "header", "%s: %s" ( key, val ) );
+         }
+      }
+
+      let mode = "r-server";
+      return new Types.ReqTunnelInfo(
+         "localhost", self.port, mode,
+         [ "../kptunnel", mode, ":%d" (self.port),
+           ":%d,192.168.0.101:22" (10000 + self.port) ] );
+   }
+   pub fn onEndTunnel( tunnelInfo:&Types.ReqTunnelInfo ) mut {
+      print( __func__, tunnelInfo.$host, tunnelInfo.$port );
+   }
+}
+
+pub fn createHandler() : UserHandler {
+   let mut handler = new UserHandler();
+   return handler;
+}

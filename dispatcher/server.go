@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -96,10 +98,15 @@ func StartHeavyClient(serverInfo HostInfo) {
 }
 
 type TunnelInfo struct {
+	env           *LnsEnv
+	cmd           *exec.Cmd
+	reconnect     bool
 	host          string
 	port          int
+	mode          string
 	commands      []string
-	reqTunnelInfo *lns.Handle_ReqTunnelInfo
+	reqTunnelInfo *lns.Types_ReqTunnelInfo
+	hostPort      string
 }
 
 type WrapWSHandler struct {
@@ -107,22 +114,21 @@ type WrapWSHandler struct {
 	param  *TunnelParam
 }
 
-// この構造体への排他
-var lns_env_mutex sync.Mutex
+var host2TunnelInfo map[string]*TunnelInfo = map[string]*TunnelInfo{}
 
-func launchTunnel(req *http.Request) (int, *TunnelInfo) {
-	lns_env_mutex.Lock()
-	defer lns_env_mutex.Unlock()
+// host2TunnelInfo への排他
+var host2TunnelInfo_mutex sync.Mutex
 
-	env := Lns_GetEnv()
-
-	reqTunnelInfo := lns.Handle_canAcceptRequest(
+func processRequest(env *LnsEnv, req *http.Request) (int, string, *TunnelInfo) {
+	statusCode, message := lns.Handle_canAccept(
 		env, req.URL.String(), Lns_mapFromGo(req.Header))
 
-	statusCode := reqTunnelInfo.Get_statusCode(env)
 	if statusCode != 200 {
-		return statusCode, nil
+		return statusCode, message, nil
 	}
+
+	reqTunnelInfo := lns.Handle_getTunnelInfo(
+		env, req.URL.String(), Lns_mapFromGo(req.Header))
 
 	commands := []string{}
 
@@ -130,20 +136,22 @@ func launchTunnel(req *http.Request) (int, *TunnelInfo) {
 		commands = append(commands, val.(string))
 	}
 
+	hostPort := fmt.Sprintf(
+		"%s:%d", reqTunnelInfo.Get_host(env), reqTunnelInfo.Get_port(env))
 	info := &TunnelInfo{
+		env:           env,
+		cmd:           nil,
 		host:          reqTunnelInfo.Get_host(env),
 		port:          reqTunnelInfo.Get_port(env),
+		mode:          reqTunnelInfo.Get_mode(env),
 		commands:      commands,
 		reqTunnelInfo: reqTunnelInfo,
+		hostPort:      hostPort,
 	}
-	return statusCode, info
+	return statusCode, "", info
 }
 
-func onEndTunnel(reqTunnelInfo *lns.Handle_ReqTunnelInfo) {
-	lns_env_mutex.Lock()
-	defer lns_env_mutex.Unlock()
-
-	env := Lns_GetEnv()
+func onEndTunnel(env *LnsEnv, reqTunnelInfo *lns.Types_ReqTunnelInfo) {
 	lns.Handle_onEndTunnel(env, reqTunnelInfo)
 }
 
@@ -159,10 +167,15 @@ func (handler WrapWSHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	statusCode, info := launchTunnel(req)
+	env := Lns_createAsyncEnv("ServerHttp")
+	defer Lns_releaseEnv(env)
+	// env := Lns_GetEnv()
+
+	statusCode, message, info := processRequest(env, req)
 	if statusCode != 200 {
-		w.WriteHeader(http.StatusNotAcceptable)
-		//fmt.Fprintf( w, "%v\n", err )
+		w.WriteHeader(statusCode)
+		w.Write([]byte(message))
+		log.Printf("request error -- %d: %s\n", statusCode, message)
 		time.Sleep(3 * time.Second)
 		return
 	}
@@ -226,56 +239,135 @@ func transportConn(finChan chan bool, message string, src io.Reader, dst io.Writ
 func stopTunnel(info *TunnelInfo) {
 	log.Printf("stopTunnel -- %s", info)
 
-	defer onEndTunnel(info.reqTunnelInfo)
+	host2TunnelInfo_mutex.Lock()
+	delete(host2TunnelInfo, info.hostPort)
+	host2TunnelInfo_mutex.Unlock()
 
-	cmd := exec.Command(info.commands[0], "ctrl", "stop")
-	if err := cmd.Run(); err != nil {
+	defer onEndTunnel(info.env, info.reqTunnelInfo)
+
+	var mode string
+	switch info.mode {
+	case "server":
+		mode = "client"
+	case "r-server":
+		mode = "r-client"
+	case "wsserver":
+		mode = "wsclient"
+	case "r-wsserver":
+		mode = "r-wsclient"
+	default:
+		log.Fatalf("unknown mode -- %s", info.mode)
+	}
+
+	command := []string{mode, "-ctrl", "stop", info.hostPort}
+	log.Printf("%v", command)
+	killCmd := exec.Command(info.commands[0], command...)
+	if err := killCmd.Run(); err != nil {
 		log.Printf("error run -- %s", err)
 		return
 	}
+	// Start() したプロセスは Wait() してやらないと、 defunct になってしまう。
+	info.cmd.Wait()
+	log.Printf("end to wait -- %s", info.hostPort)
 }
 
-func processConnection(
-	conn *ConnInfo, param *TunnelParam, info *TunnelInfo) {
+func processToTransfer(conn *ConnInfo, info *TunnelInfo) {
+	log.Printf("launch server app")
+
+	dstConn, err := net.Dial("tcp", info.hostPort)
+	if err != nil {
+		log.Printf("processConnection: conn->dst: %s", err)
+		return
+	}
+
+	finChan := make(chan bool, 1)
+
+	log.Printf("connect %s", info)
+
+	go transportConn(finChan, "processConnection: conn->dst", conn.Conn, dstConn)
+	go transportConn(finChan, "processConnection: dst->conn", dstConn, conn.Conn)
+
+	<-finChan
+
+	dstConn.Close()
+}
+
+func startTunnelApp(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) bool {
+	log.Printf("run %s", info)
+
+	cmd := exec.Command(info.commands[0], info.commands[1:]...)
+	reader, err := cmd.StderrPipe()
+	if err != nil {
+		log.Printf("failed to get the stdout from the tunnel.%s", err)
+		return false
+	}
+
+	if err := cmd.Start(); err != nil {
+		log.Printf("error run -- %s", err)
+		return false
+	}
+
+	// Tunnel アプリの受信準備待ち
+	log.Printf("wait server app")
+	tunnelStdout := bufio.NewReader(reader)
+	for {
+		line, err := tunnelStdout.ReadString('\n')
+		if err != nil {
+			log.Printf("failed to read the stdout from the tunnel.%s", err)
+			return false
+		}
+		log.Printf("line: %s", line)
+		if strings.Index(line, "start reverse websocket -- ") != -1 ||
+			strings.Index(line, "start websocket -- ") != -1 ||
+			strings.Index(line, "waiting reverse ---") != -1 ||
+			strings.Index(line, "waiting ---") != -1 {
+			// メッセージ出力後も多少のラグがあるので、
+			// 念の為 500 msec ウェイトする。
+			time.Sleep(500 * time.Millisecond)
+			break
+		}
+	}
+	// Tunnel アプリの出力読み捨て
+	dummyRead := func() {
+		buf := make([]byte, 1000)
+		for {
+			size, err := reader.Read(buf)
+			if err != nil {
+				break
+			}
+			os.Stdout.Write(buf[0:size])
+		}
+		log.Printf("stop dummyRead -- %s", info.hostPort)
+	}
+	go dummyRead()
+
+	info.cmd = cmd
+
+	// host2TunnelInfo に info を登録
+	host2TunnelInfo_mutex.Lock()
+	host2TunnelInfo[info.hostPort] = info
+	host2TunnelInfo_mutex.Unlock()
+
+	return true
+}
+
+func processConnection(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) {
 
 	if len(info.commands) == 0 {
 		log.Printf("error run -- commands' length is 0")
 		return
 	}
 
-	log.Printf("run %s", info)
-
-	cmd := exec.Command(info.commands[0], info.commands[1:]...)
-	if err := cmd.Start(); err != nil {
-		log.Printf("error run -- %s", err)
-		return
-	}
-
-	defer stopTunnel(info)
-
-	{
-		// 暫定で 2 秒ウェイトする。本来は Ready になるのを待つべき
-		time.Sleep(2 * time.Second)
-		dstConn, err := net.Dial(
-			"tcp", fmt.Sprintf("%s:%d", info.host, info.port))
-		if err != nil {
-			log.Printf("processConnection: conn->dst: %s", err)
+	if info.cmd == nil {
+		if !startTunnelApp(conn, param, info) {
 			return
 		}
-
-		finChan := make(chan bool, 1)
-
-		log.Printf("connect %s", info)
-
-		go transportConn(finChan, "processConnection: conn->dst", conn.Conn, dstConn)
-		go transportConn(finChan, "processConnection: dst->conn", dstConn, conn.Conn)
-
-		<-finChan
-
-		dstConn.Close()
-
-		//<-finChan
+		defer stopTunnel(info)
 	}
+
+	// Tunnel アプリとの通信中継
+	processToTransfer(conn, info)
+	//<-finChan
 }
 
 func SimpleConsole(conn io.ReadWriter) {

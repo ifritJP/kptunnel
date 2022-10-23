@@ -53,10 +53,17 @@ func IsVerbose() bool {
 	return verboseFlag
 }
 
-func main() {
-
+func initLnsRuntime() {
 	Lns_InitModOnce(LnsRuntimeOpt{})
-	lns.Lns_handle_init(Lns_GetEnv())
+
+	env := Lns_GetEnv()
+	lns.Lns_handle_init(env)
+	syncFlag := LnsCreateSyncFlag(env)
+	go syncFlag.Wait(env)
+}
+
+func main() {
+	initLnsRuntime()
 
 	if BUFSIZE >= 65536 {
 		fmt.Printf("BUFSIZE is illegal. -- ", 65536)
@@ -85,6 +92,7 @@ func main() {
 		cmd.Usage()
 		os.Exit(0)
 	}
+
 	if len(cmd.Args()) > 0 {
 		switch mode := cmd.Args()[0]; mode {
 		case "wsserver":
@@ -113,6 +121,7 @@ func ParseOpt(
 		needForward = true
 	}
 
+	userHandlerPath := cmd.String("u", "", "userHandler path. (ex: handler.lns,canAccess.lns)")
 	ipPattern := cmd.String("ip", "", "allow ip range (192.168.0.1/24)")
 	console := cmd.String("console", "", "console port. (:1234)")
 	verbose := cmd.Bool("verbose", false, "verbose. (true or false)")
@@ -171,6 +180,14 @@ func ParseOpt(
 		if err != nil {
 			fmt.Println(err)
 			usage()
+		}
+	}
+
+	if *userHandlerPath != "" {
+		env := Lns_createAsyncEnv("ServerHttp")
+		defer Lns_releaseEnv(env)
+		if !lns.Handle_setupHandle(env, *userHandlerPath) {
+			os.Exit(1)
 		}
 	}
 

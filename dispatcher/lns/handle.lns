@@ -1,20 +1,224 @@
-pub class ReqTunnelInfo {
-   let statusCode:int {pub};
-   let message:str {pub};
-   let host:str {pub};
-   let port:int {pub};
-   let tunnelArgList:&List<str> {pub};
-}
+_lune_control default_async_all;
 
-let mut port = 10000;
 
-pub fn canAcceptRequest( uri:str, headerMap:&Map<str,&List<str>> ) : &ReqTunnelInfo {
-   port = port + 1;
+import lns.Types;
+import go/github:com.ifritJP.LuneScript.src.lune.base.front as LnsFront;
+import go/github:com.ifritJP.LuneScript.src.lune.base.Option as LnsOpt;
+import go/github:com.ifritJP.LuneScript.src.lune.base.Util as LnsUtil;
+
+class UserAsyncHandlerWrapper extend (Types.AsyncHandleIF) {
+   let obj:Luaval<stem>;
+   pub fn __init( obj:Luaval<stem> ) {
+      self.obj = obj;
+   }
    
-   return new ReqTunnelInfo(
-      200, "", "localhost", port,
-      [ "../kptunnel", "r-server", ":%d" (port), ":20000,:22" ] );
+   pub fn canAccept( uri:str, headerMap:&Map<str,&List<str>> ) __async mut : int, str {
+      let mut statusCode = 500;
+      let mut mess = "internal error";
+      __luaDepend {
+         if! let func = self.obj.canAccept {
+            if! let work1, work2 = (func@@form)( self.obj, uri, headerMap ) {
+               statusCode = work1@@int;
+               mess = work2@@str;
+            }
+         }
+      }
+      return statusCode, mess;
+   }
 }
 
-pub fn onEndTunnel( tunnelInfo:&ReqTunnelInfo ) {
+
+
+class UserHandlerWrapper extend (Types.HandleIF) {
+   let obj:Luaval<stem>;
+   let reqTunnelInfoMap:Map<&Types.ReqTunnelInfo,Luaval<stem>>;
+   pub fn __init( obj:Luaval<stem> ) {
+      self.obj = obj;
+      self.reqTunnelInfoMap = {};
+   }
+   
+   pub fn getTunnelInfo(
+      uri:str, headerMap:&Map<str,&List<str>> ) __noasync mut : &Types.ReqTunnelInfo
+   {
+      let mut luaval:Luaval<stem>! = nil;
+      let mut val:stem! = nil;
+      __luago {
+         if! let func = self.obj.getTunnelInfo {
+            let mut work = (func@@form)( self.obj, uri, headerMap );
+            luaval = work;
+            val = expandLuavalMap( luaval );
+         }
+      }
+      when! val {
+         let info, mess = Types.ReqTunnelInfo._fromStem( val );
+         when! info, luaval {
+            self.reqTunnelInfoMap[ info ] = luaval;
+            return info;
+         }
+         error( "failed to fromStem -- %s" ( mess) );
+      }
+      error( "failed to expandLuavalMap" );
+   }
+   pub fn onEndTunnel( tunnelInfo:&Types.ReqTunnelInfo ) __noasync mut {
+      __luago {
+         if! let func = self.obj.onEndTunnel {
+            (func@@form)( self.obj, self.reqTunnelInfoMap[ tunnelInfo ] );
+         }
+      }
+   }
+}
+
+class DefaultHandler extend (Types.HandleIF, Types.AsyncHandleIF ) {
+   let mut port:int;
+   local fn __init() {
+      self.port = 10000;
+   }
+
+   pub fn canAccept( uri:str, headerMap:&Map<str,&List<str>> ) __async mut : int, str {
+      return 200, "";
+   }
+   
+   pub fn getTunnelInfo(
+      uri:str, headerMap:&Map<str,&List<str>> ) __noasync mut : &Types.ReqTunnelInfo
+   {
+      self.port = self.port + 1;
+
+      // return new ReqTunnelInfo( 400, "hoge error", "", 0, "", [] );
+      
+      print( __func__, "url", uri );
+      foreach valList, key in headerMap {
+         foreach val in valList {
+            print( __func__, "header", "%s: %s" ( key, val ) );
+         }
+      }
+
+      let mode = "r-server";
+      return new Types.ReqTunnelInfo(
+         "localhost", self.port, mode,
+         [ "../kptunnel", mode, ":%d" (self.port),
+           ":%d,192.168.0.101:22" (10000 + self.port) ] );
+   }
+   pub fn onEndTunnel( tunnelInfo:&Types.ReqTunnelInfo ) __noasync mut {
+      print( __func__, tunnelInfo.$host, tunnelInfo.$port );
+   }
+}
+
+let mut handler:Types.HandleIF = new DefaultHandler();
+let mut canAcceptLuaCode = "";
+
+fn convScript( path:str ) : str! {
+   let! mut fileObj = io.open( path## ) {
+      print( "failed to open -- %s" ( path ) );
+      return nil;
+   };
+   let! lnsCode = fileObj.read( "*a" ) {
+      print( "failed to read -- %s" ( path ) );
+      return nil;
+   };
+   
+   let luaCode;
+   __asyncLock {
+      let option = LnsOpt.analyze( [ path, "lua" ] );
+      luaCode = LnsFront.convertLnsCode2LuaCodeWithOpt( option, lnsCode, path## );
+   }
+   return luaCode;
+}
+
+fn loadScript( luaCode:str, path:str, funcName:str ) : Luaval<form>! {
+   let mut func:Luaval<form>! = nil;
+   __luaDepend{
+      let loaded, mess = _load( luaCode## );
+      when! loaded {
+         if! let mut mod = loaded(##) {
+            if! let work = mod[ funcName ] {
+               func = work@@form;
+            } else {
+               print( "not found func -- ", funcName );
+            }
+         } else {
+            print( "failed to exec the load module -- ", path );
+         }
+      } else {
+         print( "failed to load -- ", path, mess );
+      }
+   }
+   return func;
+}
+
+pub fn setupHandle( path:str ) : bool {
+
+   let list = LnsUtil.splitStr( path, "[^,]+");
+   if #list ~= 2 {
+      print( "illegal param -- %s" (path) );
+      return false;
+   }
+   let handlePath = list[ 1 ];
+   let canAccessPath = list[ 2 ];
+   
+   if! convScript( canAccessPath ) {
+      canAcceptLuaCode = _exp;
+      let check;
+      __luaDepend {
+         check = loadScript( canAcceptLuaCode, "asyncHandle", "createHandler" );
+      }
+      if not check {
+         return false;
+      }
+   } else {
+      return false;
+   }
+
+   let! luaCode = convScript( handlePath ) {
+      return false;
+   };
+
+   let mut result = false;
+   __luaLock {
+      if! let func = loadScript( luaCode, handlePath, "createHandler" ) {
+         if! let mut obj = func(##) {
+            handler = new UserHandlerWrapper( obj );
+            result = true;
+         } else {
+            print( "illegal return value -- ", handlePath );
+         }
+      }
+   }
+   
+   return result;
+}
+
+pub fn canAccept( uri:str, headerMap:&Map<str,&List<str>> ) : int, str
+{
+
+   let mut asyncHandler:UserAsyncHandlerWrapper! = nil;
+   
+   __luaDepend {
+      if! let func = loadScript( canAcceptLuaCode, "createHandler", "createHandler" ) {
+         if! let mut obj = func(##) {
+            asyncHandler = new UserAsyncHandlerWrapper( obj );
+         } else {
+            print( "illegal return value -- " );
+         }
+      }
+   }
+   when! asyncHandler {
+      return asyncHandler.canAccept( uri, headerMap )**;
+   }
+   return 500, "internal error";
+}
+
+pub fn getTunnelInfo( uri:str, headerMap:&Map<str,&List<str>> ) : &Types.ReqTunnelInfo
+{
+   let info;
+   __asyncLock {
+      info = handler.getTunnelInfo( uri, headerMap );
+   }
+   return info;
+}
+
+
+pub fn onEndTunnel( tunnelInfo:&Types.ReqTunnelInfo ) {
+   __asyncLock {
+      handler.onEndTunnel( tunnelInfo );
+   }
 }
