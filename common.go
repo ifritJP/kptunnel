@@ -534,7 +534,7 @@ func ProcessServerAuth(
 		AuthResult{
 			"ok", connInfo.SessionInfo.SessionId, connInfo.SessionInfo.SessionToken,
 			connInfo.SessionInfo.WriteNo, connInfo.SessionInfo.ReadNo, forwardList})
-	log.Printf("forwardList -- %s", forwardList)
+	log.Printf("sent forwardList -- %v", forwardList)
 	if err := WriteItem(
 		stream, CITIID_CTRL, bytes, connInfo.CryptCtrlObj, nil); err != nil {
 		return false, err
@@ -726,7 +726,7 @@ func ProcessClientAuth(
 			return nil, false, fmt.Errorf("failed to auth -- %s", result.Result)
 		}
 
-		log.Printf("forwardList -- %s", result.ForwardList)
+		log.Printf("received forwardList -- %v", result.ForwardList)
 		if forwardList != nil &&
 			result.ForwardList != nil && len(result.ForwardList) > 0 {
 			// クライアントが指定している ForwardList と、
@@ -734,11 +734,11 @@ func ProcessClientAuth(
 			// 違う場合は警告を出力する。
 			orgMap := map[string]bool{}
 			for _, forwardInfo := range forwardList {
-				orgMap[forwardInfo.Src.toStr()+forwardInfo.Dst.toStr()] = true
+				orgMap[forwardInfo.toStr()] = true
 			}
 			newMap := map[string]bool{}
 			for _, forwardInfo := range result.ForwardList {
-				newMap[forwardInfo.Src.toStr()+forwardInfo.Dst.toStr()] = true
+				newMap[forwardInfo.toStr()] = true
 			}
 			diff := false
 			if len(orgMap) != len(newMap) {

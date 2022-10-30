@@ -37,10 +37,20 @@ func (lock *Lock) rel() {
 
 // tunnel 上に通す tcp の組み合わせ
 type ForwardInfo struct {
+	// これが reverse tunnel の場合 true
+	IsReverseTunnel bool
 	// listen する host:port
 	Src HostInfo
 	// forward する相手の host:port
 	Dst HostInfo
+}
+
+func (info *ForwardInfo) toStr() string {
+	kind := "t"
+	if info.IsReverseTunnel {
+		kind = "r"
+	}
+	return fmt.Sprint("%s:%s:%s", kind, info.Src.toStr(), info.Dst.toStr())
 }
 
 // tunnel の制御パラメータ
@@ -1587,27 +1597,32 @@ func (group *ListenGroup) Close() {
 	}
 }
 
-func NewListen(forwardList []ForwardInfo) *ListenGroup {
-
+func NewListen(isClient bool, forwardList []ForwardInfo) (*ListenGroup, []ForwardInfo) {
 	group := ListenGroup{[]ListenInfo{}}
+	localForward := []ForwardInfo{}
 
 	for _, forwardInfo := range forwardList {
-		local, err := net.Listen("tcp", forwardInfo.Src.toStr())
-		if err != nil {
-			log.Fatal(err)
-			return nil
+		if isClient && !forwardInfo.IsReverseTunnel ||
+			!isClient && forwardInfo.IsReverseTunnel {
+			local, err := net.Listen("tcp", forwardInfo.Src.toStr())
+			if err != nil {
+				log.Fatal(err)
+				return nil, []ForwardInfo{}
+			}
+			group.list = append(group.list, ListenInfo{local, forwardInfo})
+		} else {
+			localForward = append(localForward, forwardInfo)
 		}
-		group.list = append(group.list, ListenInfo{local, forwardInfo})
 	}
 
-	return &group
+	return &group, localForward
 }
 
 func ListenNewConnectSub(
 	listenInfo ListenInfo, info *pipeInfo) {
 
 	process := func() {
-		log.Printf("wating with %s for %s\n",
+		log.Printf("waiting with %s for %s\n",
 			listenInfo.forwardInfo.Src.toStr(),
 			listenInfo.forwardInfo.Dst.toStr())
 		src, err := listenInfo.listener.Accept()
@@ -1647,6 +1662,54 @@ func ListenNewConnectSub(
 	for {
 		process()
 	}
+}
+
+// Tunnel 上に通すセッションを待ち受け & セッションの通信先と接続する
+//
+// @param connInfo Tunnel
+// @param port 待ち受けるポート番号
+// @param parm トンネル情報
+// @param reconnect 再接続関数
+func ListenAndNewConnect(
+	isClient bool,
+	listenGroup *ListenGroup, localForwardList []ForwardInfo,
+	connInfo *ConnInfo, param *TunnelParam,
+	reconnect func(sessionInfo *SessionInfo) *ConnInfo) {
+
+	log.Printf(
+		"ListenAndNewConnect -- %d, %d",
+		len(listenGroup.list), len(localForwardList))
+
+	info := startRelaySession(
+		connInfo, param.keepAliveInterval, len(listenGroup.list) > 0, reconnect)
+
+	for _, listenInfo := range listenGroup.list {
+		go ListenNewConnectSub(listenInfo, info)
+	}
+	if len(localForwardList) > 0 {
+		for {
+			header := connInfo.SessionInfo.getHeader()
+
+			if header == nil {
+				break
+			}
+			go NewConnect(header, info)
+		}
+	}
+	if len(listenGroup.list) > 0 {
+		for {
+			log.Printf("wait releaseChan")
+			if !<-connInfo.SessionInfo.releaseChan {
+				break
+			}
+			log.Printf("isClient -- %v", isClient)
+			if !isClient {
+				break
+			}
+		}
+	}
+	log.Printf("disconnected")
+	connInfo.SessionInfo.SetState(Session_state_disconnected)
 }
 
 // Tunnel 上に通すセッションを待ち受け、開始されたセッションを処理する。

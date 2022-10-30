@@ -34,17 +34,18 @@ func connectTunnel(
 }
 
 func StartClient(param *TunnelParam, forwardList []ForwardInfo) {
-	listenGroup := NewListen(forwardList)
-	defer listenGroup.Close()
 
-	for {
+	process := func() bool {
 		sessionParam := *param
-		_, reconnectInfo := connectTunnel(
+		forwardList, reconnectInfo := connectTunnel(
 			param.serverInfo, &sessionParam, forwardList)
 		if reconnectInfo.Err != nil {
-			break
+			return false
 		}
 		defer reconnectInfo.Conn.Conn.Close()
+
+		listenGroup, localForwardList := NewListen(true, forwardList)
+		defer listenGroup.Close()
 
 		reconnect := CreateToReconnectFunc(
 			func(sessionInfo *SessionInfo) ReconnectInfo {
@@ -52,25 +53,46 @@ func StartClient(param *TunnelParam, forwardList []ForwardInfo) {
 					connectTunnel(param.serverInfo, &sessionParam, forwardList)
 				return reconnectInfo
 			})
-		ListenNewConnect(listenGroup, reconnectInfo.Conn, &sessionParam, true, reconnect)
+		ListenAndNewConnect(
+			true, listenGroup, localForwardList, reconnectInfo.Conn, &sessionParam, reconnect)
+
+		return true
+	}
+
+	for {
+		if !process() {
+			break
+		}
 	}
 }
 
 func StartReverseClient(param *TunnelParam) {
-	for {
+
+	process := func() bool {
 		sessionParam := *param
-		_, reconnectInfo := connectTunnel(param.serverInfo, &sessionParam, nil)
+		forwardList, reconnectInfo := connectTunnel(param.serverInfo, &sessionParam, nil)
 		if reconnectInfo.Err != nil {
-			break
+			return false
 		}
 		defer reconnectInfo.Conn.Conn.Close()
+
+		listenGroup, localForwardList := NewListen(true, forwardList)
+		defer listenGroup.Close()
 
 		reconnect := CreateToReconnectFunc(
 			func(sessionInfo *SessionInfo) ReconnectInfo {
 				_, reconnectInfo := connectTunnel(param.serverInfo, &sessionParam, nil)
 				return reconnectInfo
 			})
-		NewConnectFromWith(reconnectInfo.Conn, &sessionParam, reconnect)
+		ListenAndNewConnect(
+			true, listenGroup, localForwardList, reconnectInfo.Conn, &sessionParam, reconnect)
+		return true
+	}
+
+	for {
+		if !process() {
+			break
+		}
 	}
 }
 
@@ -86,7 +108,7 @@ func StartWebSocketClient(
 	}
 	defer reconnectInfo.Conn.Conn.Close()
 
-	listenGroup := NewListen(forwardList)
+	listenGroup, localForwardList := NewListen(true, forwardList)
 	defer listenGroup.Close()
 
 	reconnect := CreateToReconnectFunc(
@@ -96,7 +118,8 @@ func StartWebSocketClient(
 				&sessionParam, sessionInfo, forwardList)
 			return reconnectInfo
 		})
-	ListenNewConnect(listenGroup, reconnectInfo.Conn, &sessionParam, true, reconnect)
+	ListenAndNewConnect(
+		true, listenGroup, localForwardList, reconnectInfo.Conn, &sessionParam, reconnect)
 }
 
 func StartReverseWebSocketClient(
@@ -104,7 +127,7 @@ func StartReverseWebSocketClient(
 
 	sessionParam := *param
 
-	connect := CreateToReconnectFunc(
+	reconnect := CreateToReconnectFunc(
 		func(sessionInfo *SessionInfo) ReconnectInfo {
 			_, reconnectInfo := ConnectWebScoket(
 				serverInfo.toStr(), proxyHost,
@@ -113,10 +136,18 @@ func StartReverseWebSocketClient(
 		})
 
 	process := func() {
-		connInfo := connect(nil)
-		defer connInfo.Conn.Close()
+		forwardList, reconnectInfo := ConnectWebScoket(
+			serverInfo.toStr(), proxyHost, userAgent, &sessionParam, nil, []ForwardInfo{})
+		if reconnectInfo.Err != nil {
+			return
+		}
+		defer reconnectInfo.Conn.Conn.Close()
 
-		NewConnectFromWith(connInfo, &sessionParam, connect)
+		listenGroup, localForwardList := NewListen(true, forwardList)
+		defer listenGroup.Close()
+
+		ListenAndNewConnect(
+			true, listenGroup, localForwardList, reconnectInfo.Conn, &sessionParam, reconnect)
 	}
 	for {
 		process()

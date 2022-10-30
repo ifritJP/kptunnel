@@ -17,7 +17,7 @@ import (
 	_ "net/http/pprof"
 )
 
-const VERSION = "0.1.0"
+const VERSION = "0.2.0"
 
 // 2byte の MAX。
 // ここを 65535 より大きくする場合は、WriteItem, ReadItem の処理を変更する。
@@ -152,7 +152,9 @@ func ParseOpt(
 		}
 		fmt.Fprintf(cmd.Output(), "[option] \n\n")
 		fmt.Fprintf(cmd.Output(), "   server: e.g. localhost:1234 or :1234\n")
-		fmt.Fprintf(cmd.Output(), "   forward: listen-port,target-port  e.g. :1234,hoge.com:5678\n")
+		fmt.Fprintf(cmd.Output(), "   forward: <new_forward|old_forward> \n")
+		fmt.Fprintf(cmd.Output(), "   new_forward: <r|t>,old_forward  e.g. r,:1234,hoge.com:5678\n")
+		fmt.Fprintf(cmd.Output(), "   old_forward: listen-port,target-port  e.g. :1234,hoge.com:5678\n")
 		fmt.Fprintf(cmd.Output(), "\n")
 		fmt.Fprintf(cmd.Output(), " options:\n")
 		cmd.PrintDefaults()
@@ -242,9 +244,28 @@ func ParseOpt(
 		}()
 	}
 
+	isReverseTunnel := false
+	if mode == "r-server" || mode == "r-wsserver" ||
+		mode == "r-client" || mode == "r-wsclient" {
+		isReverseTunnel = true
+	}
+
 	forwardList := []ForwardInfo{}
 	for _, arg := range nonFlagArgs[1:] {
+		isReverseForward := isReverseTunnel
 		tokenList := strings.Split(arg, ",")
+		if len(tokenList) == 3 {
+			switch tokenList[0] {
+			case "r":
+				isReverseForward = true
+			case "t":
+				isReverseForward = false
+			default:
+				fmt.Printf("illegal forward type '%s'. it needs to be 't' or 'r'.", tokenList[0])
+				usage()
+			}
+			tokenList = tokenList[1:]
+		}
 		if len(tokenList) != 2 {
 			fmt.Printf("illegal forward. need ',' -- %s", arg)
 			usage()
@@ -260,7 +281,9 @@ func ParseOpt(
 			usage()
 		}
 		forwardList = append(
-			forwardList, ForwardInfo{Src: *srcInfo, Dst: *remoteInfo})
+			forwardList,
+			ForwardInfo{
+				IsReverseTunnel: isReverseForward, Src: *srcInfo, Dst: *remoteInfo})
 	}
 	if mode == "r-server" || mode == "r-wsserver" ||
 		mode == "client" || mode == "wsclient" {

@@ -44,8 +44,12 @@
   - When the mode is the reverse tunnel, this argument must set from the server side.
   - When the mode is the normal tunnel, this argument must set from the client side.
   - This argument must set with following format.
-    - =[localhost]:local-port,serverhost:server-port=
-    - e.g. :20000,hoge.com:22
+    - =[<r|t>,][localhost]:local-port,serverhost:server-port=
+    - r: use as the reverse tunnel
+    - t: use as the tunnel
+    - e.g.1  :20000,hoge.com:22
+    - e.g.2  r,:20000,hoge.com:22
+    - e.g.3  t,:20000,hoge.com:22
   - 'serverhost' is sent directory widthout change to the server.
     - When the forwarding is ':20000,localhost:22', this 'localhost' shows the server.
   - When server side sets the forwarding, client side's forwarding is overridden.

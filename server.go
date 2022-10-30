@@ -169,10 +169,15 @@ func StartServer(param *TunnelParam, forwardList []ForwardInfo) {
 	}
 	defer local.Close()
 
+	listenGroup, localForwardList := NewListen(false, forwardList)
+	defer listenGroup.Close()
+
 	for {
 		listenTcpServer(local, param, forwardList,
 			func(connInfo *ConnInfo) {
-				NewConnectFromWith(connInfo, param, GetSessionConn)
+				ListenAndNewConnect(
+					false, listenGroup, localForwardList,
+					connInfo, param, GetSessionConn)
 			})
 	}
 }
@@ -185,14 +190,15 @@ func StartReverseServer(param *TunnelParam, forwardList []ForwardInfo) {
 	}
 	defer local.Close()
 
-	listenGroup := NewListen(forwardList)
+	listenGroup, localForwardList := NewListen(false, forwardList)
 	defer listenGroup.Close()
 
 	for {
 		listenTcpServer(local, param, forwardList,
 			func(connInfo *ConnInfo) {
-				ListenNewConnect(
-					listenGroup, connInfo, param, false, GetSessionConn)
+				ListenAndNewConnect(
+					false, listenGroup, localForwardList,
+					connInfo, param, GetSessionConn)
 			})
 	}
 }
@@ -227,6 +233,8 @@ func (handler WrapWSHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	wshandler := websocket.Handler(wrap)
 	// WebSocket サーバハンドル処理。
 	wshandler.ServeHTTP(w, req)
+
+	log.Printf("exit -- %v", req)
 }
 
 func execWebSocketServer(
@@ -263,23 +271,29 @@ func execWebSocketServer(
 func StartWebsocketServer(param *TunnelParam, forwardList []ForwardInfo) {
 	log.Print("start websocket -- ", param.serverInfo.toStr())
 
+	listenGroup, localForwardList := NewListen(false, forwardList)
+	defer listenGroup.Close()
+
 	execWebSocketServer(
 		*param, forwardList,
 		func(connInfo *ConnInfo, tunnelParam *TunnelParam) {
-			NewConnectFromWith(connInfo, tunnelParam, GetSessionConn)
+			ListenAndNewConnect(
+				false, listenGroup, localForwardList,
+				connInfo, tunnelParam, GetSessionConn)
 		})
 }
 
 func StartReverseWebSocketServer(param *TunnelParam, forwardList []ForwardInfo) {
 	log.Print("start reverse websocket -- ", param.serverInfo.toStr())
 
-	listenGroup := NewListen(forwardList)
+	listenGroup, localForwardList := NewListen(false, forwardList)
 	defer listenGroup.Close()
 
 	execWebSocketServer(
 		*param, forwardList,
 		func(connInfo *ConnInfo, tunnelParam *TunnelParam) {
-			ListenNewConnect(
-				listenGroup, connInfo, tunnelParam, false, GetSessionConn)
+			ListenAndNewConnect(
+				false, listenGroup, localForwardList,
+				connInfo, tunnelParam, GetSessionConn)
 		})
 }
