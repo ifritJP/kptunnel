@@ -421,6 +421,7 @@ type AuthResponse struct {
 	WriteNo      int64
 	ReadNo       int64
 	Ctrl         int
+	ForwardList  []ForwardInfo
 }
 
 // server -> client
@@ -446,19 +447,20 @@ func generateChallengeResponse(challenge string, pass *string, hint string) stri
 // @param param Tunnel情報
 // @param remoteAddr 接続元のアドレス
 // @return bool 新しい session の場合 true
+// @return []ForwardInfo 接続する ForwardInfo リスト
 // @return error
 func ProcessServerAuth(
 	connInfo *ConnInfo, param *TunnelParam,
-	remoteAddr string, forwardList []ForwardInfo) (bool, error) {
+	remoteAddr string, forwardList []ForwardInfo) (bool, []ForwardInfo, error) {
 
 	stream := connInfo.Conn
 	log.Print("start auth")
 
 	if err := CorrectLackOffsetWrite(stream); err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if err := CorrectLackOffsetRead(stream); err != nil {
-		return false, err
+		return false, nil, err
 	}
 
 	// 共通文字列を暗号化して送信することで、
@@ -474,7 +476,7 @@ func ProcessServerAuth(
 	bytes, _ := json.Marshal(challenge)
 	if err := WriteItem(
 		stream, CITIID_CTRL, bytes, connInfo.CryptCtrlObj, nil); err != nil {
-		return false, err
+		return false, nil, err
 	}
 	log.Print("challenge ", challenge.Challenge)
 	connInfo.SessionInfo.SetState(Session_state_authchallenge)
@@ -482,11 +484,11 @@ func ProcessServerAuth(
 	// challenge-response 処理
 	reader, err := readItemWithReader(stream, connInfo.CryptCtrlObj)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	var resp AuthResponse
 	if err := json.NewDecoder(reader).Decode(&resp); err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if resp.Response != generateChallengeResponse(
 		challenge.Challenge, param.pass, resp.Hint) {
@@ -494,10 +496,10 @@ func ProcessServerAuth(
 		bytes, _ := json.Marshal(AuthResult{"ng", 0, "", 0, 0, nil})
 		if err := WriteItem(
 			stream, CITIID_CTRL, bytes, connInfo.CryptCtrlObj, nil); err != nil {
-			return false, err
+			return false, nil, err
 		}
 		log.Print("mismatch password")
-		return false, fmt.Errorf("mismatch password")
+		return false, nil, fmt.Errorf("mismatch password")
 	}
 
 	// ここまででクライアントの認証が成功したので、
@@ -516,9 +518,9 @@ func ProcessServerAuth(
 			bytes, _ := json.Marshal(AuthResult{"ng: " + mess, 0, "", 0, 0, nil})
 			if err := WriteItem(
 				stream, CITIID_CTRL, bytes, connInfo.CryptCtrlObj, nil); err != nil {
-				return false, err
+				return false, nil, err
 			}
-			return false, fmt.Errorf(mess)
+			return false, nil, fmt.Errorf(mess)
 		} else {
 			connInfo.SessionInfo = sessionInfo
 			WaitPauseSession(connInfo.SessionInfo)
@@ -535,9 +537,15 @@ func ProcessServerAuth(
 			"ok", connInfo.SessionInfo.SessionId, connInfo.SessionInfo.SessionToken,
 			connInfo.SessionInfo.WriteNo, connInfo.SessionInfo.ReadNo, forwardList})
 	log.Printf("sent forwardList -- %v", forwardList)
+
+	if len(forwardList) == 0 {
+		forwardList = resp.ForwardList
+		log.Printf("receive forwardList -- %v", resp.ForwardList)
+	}
+
 	if err := WriteItem(
 		stream, CITIID_CTRL, bytes, connInfo.CryptCtrlObj, nil); err != nil {
-		return false, err
+		return false, nil, err
 	}
 	log.Print("match password")
 	connInfo.SessionInfo.SetState(Session_state_authresult)
@@ -551,14 +559,14 @@ func ProcessServerAuth(
 		for count := 0; count < BENCH_LOOP_COUNT; count++ {
 			if _, err := ReadItem(
 				stream, connInfo.CryptCtrlObj, benchBuf, heapCitiBuf); err != nil {
-				return false, err
+				return false, nil, err
 			}
 			if err := WriteItem(
 				stream, CITIID_CTRL, benchBuf, connInfo.CryptCtrlObj, nil); err != nil {
-				return false, err
+				return false, nil, err
 			}
 		}
-		return false, fmt.Errorf("benchmarck")
+		return false, nil, fmt.Errorf("benchmarck")
 	}
 	if resp.Ctrl == CTRL_STOP {
 		log.Print("receive the stop request")
@@ -572,7 +580,7 @@ func ProcessServerAuth(
 	//     JoinUntilToCloseConn( stream )
 	// }
 
-	return newSession, nil
+	return newSession, forwardList, nil
 }
 
 func CorrectLackOffsetWrite(stream io.Writer) error {
@@ -704,7 +712,7 @@ func ProcessClientAuth(
 		AuthResponse{
 			resp, hint, connInfo.SessionInfo.SessionToken,
 			connInfo.SessionInfo.WriteNo,
-			connInfo.SessionInfo.ReadNo, param.ctrl})
+			connInfo.SessionInfo.ReadNo, param.ctrl, forwardList})
 	if err := WriteItem(
 		stream, CITIID_CTRL, bytes, connInfo.CryptCtrlObj, nil); err != nil {
 		return nil, true, err
@@ -753,6 +761,7 @@ func ProcessClientAuth(
 			}
 			if diff {
 				log.Printf("******* override forward *******")
+				forwardList = result.ForwardList
 			}
 		}
 
@@ -798,5 +807,5 @@ func ProcessClientAuth(
 		connInfo.SessionInfo.SetReWrite(result.ReadNo)
 	}
 
-	return result.ForwardList, true, nil
+	return forwardList, true, nil
 }

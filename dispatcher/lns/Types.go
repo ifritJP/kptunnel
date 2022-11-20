@@ -3,10 +3,40 @@ package lns
 import . "github.com/ifritJP/LuneScript/src/lune/base/runtime_go"
 var init_Types bool
 var Types__mod__ string
+// decl enum -- ConnectMode 
+type Types_ConnectMode = string
+const Types_ConnectMode__CanReconnect = "CanReconnect"
+const Types_ConnectMode__Disconnect = "Disconnect"
+const Types_ConnectMode__OneShot = "OneShot"
+const Types_ConnectMode__Reconnect = "Reconnect"
+var Types_ConnectModeList_ = NewLnsList( []LnsAny {
+  Types_ConnectMode__Disconnect,
+  Types_ConnectMode__OneShot,
+  Types_ConnectMode__CanReconnect,
+  Types_ConnectMode__Reconnect,
+})
+func Types_ConnectMode_get__allList(_env *LnsEnv) *LnsList{
+    return Types_ConnectModeList_
+}
+var Types_ConnectModeMap_ = map[string]string {
+  Types_ConnectMode__CanReconnect: "ConnectMode.CanReconnect",
+  Types_ConnectMode__Disconnect: "ConnectMode.Disconnect",
+  Types_ConnectMode__OneShot: "ConnectMode.OneShot",
+  Types_ConnectMode__Reconnect: "ConnectMode.Reconnect",
+}
+func Types_ConnectMode__from(_env *LnsEnv, arg1 string) LnsAny{
+    if _, ok := Types_ConnectModeMap_[arg1]; ok { return arg1 }
+    return nil
+}
+
+func Types_ConnectMode_getTxt(arg1 string) string {
+    return Types_ConnectModeMap_[arg1];
+}
 type Types_CreateHandlerFunc func (_env *LnsEnv) Types_HandleIF
 // declaration Class -- ReqTunnelInfo
 type Types_ReqTunnelInfoMtd interface {
     ToMap() *LnsMap
+    Get_connectMode(_env *LnsEnv) string
     Get_host(_env *LnsEnv) string
     Get_mode(_env *LnsEnv) string
     Get_port(_env *LnsEnv) LnsInt
@@ -15,6 +45,7 @@ type Types_ReqTunnelInfoMtd interface {
 type Types_ReqTunnelInfo struct {
     host string
     port LnsInt
+    connectMode string
     mode string
     tunnelArgList *LnsList
     FP Types_ReqTunnelInfoMtd
@@ -39,25 +70,28 @@ func Types_ReqTunnelInfoDownCastF( multi ...LnsAny ) LnsAny {
 func (obj *Types_ReqTunnelInfo) ToTypes_ReqTunnelInfo() *Types_ReqTunnelInfo {
     return obj
 }
-func NewTypes_ReqTunnelInfo(_env *LnsEnv, arg1 string, arg2 LnsInt, arg3 string, arg4 *LnsList) *Types_ReqTunnelInfo {
+func NewTypes_ReqTunnelInfo(_env *LnsEnv, arg1 string, arg2 LnsInt, arg3 string, arg4 string, arg5 *LnsList) *Types_ReqTunnelInfo {
     obj := &Types_ReqTunnelInfo{}
     obj.FP = obj
-    obj.InitTypes_ReqTunnelInfo(_env, arg1, arg2, arg3, arg4)
+    obj.InitTypes_ReqTunnelInfo(_env, arg1, arg2, arg3, arg4, arg5)
     return obj
 }
-func (self *Types_ReqTunnelInfo) InitTypes_ReqTunnelInfo(_env *LnsEnv, arg1 string, arg2 LnsInt, arg3 string, arg4 *LnsList) {
+func (self *Types_ReqTunnelInfo) InitTypes_ReqTunnelInfo(_env *LnsEnv, arg1 string, arg2 LnsInt, arg3 string, arg4 string, arg5 *LnsList) {
     self.host = arg1
     self.port = arg2
-    self.mode = arg3
-    self.tunnelArgList = arg4
+    self.connectMode = arg3
+    self.mode = arg4
+    self.tunnelArgList = arg5
 }
 func (self *Types_ReqTunnelInfo) Get_host(_env *LnsEnv) string{ return self.host }
 func (self *Types_ReqTunnelInfo) Get_port(_env *LnsEnv) LnsInt{ return self.port }
+func (self *Types_ReqTunnelInfo) Get_connectMode(_env *LnsEnv) string{ return self.connectMode }
 func (self *Types_ReqTunnelInfo) Get_mode(_env *LnsEnv) string{ return self.mode }
 func (self *Types_ReqTunnelInfo) Get_tunnelArgList(_env *LnsEnv) *LnsList{ return self.tunnelArgList }
 func (self *Types_ReqTunnelInfo) ToMapSetup( obj *LnsMap ) *LnsMap {
     obj.Items["host"] = Lns_ToCollection( self.host )
     obj.Items["port"] = Lns_ToCollection( self.port )
+    obj.Items["connectMode"] = Lns_ToCollection( self.connectMode )
     obj.Items["mode"] = Lns_ToCollection( self.mode )
     obj.Items["tunnelArgList"] = Lns_ToCollection( self.tunnelArgList )
     return obj
@@ -97,6 +131,11 @@ func Types_ReqTunnelInfo_FromMapMain( newObj *Types_ReqTunnelInfo, objMap *LnsMa
     } else {
        newObj.port = conv.(LnsInt)
     }
+    if ok,conv,mess := Lns_ToStrSub( objMap.Items["connectMode"], false, nil); !ok {
+       return false,nil,"connectMode:" + mess.(string)
+    } else {
+       newObj.connectMode = conv.(string)
+    }
     if ok,conv,mess := Lns_ToStrSub( objMap.Items["mode"], false, nil); !ok {
        return false,nil,"mode:" + mess.(string)
     } else {
@@ -112,7 +151,7 @@ func Types_ReqTunnelInfo_FromMapMain( newObj *Types_ReqTunnelInfo, objMap *LnsMa
 }
 
 type Types_HandleIF interface {
-        GetTunnelInfo(_env *LnsEnv, arg1 string, arg2 *LnsMap) *Types_ReqTunnelInfo
+        GetTunnelInfo(_env *LnsEnv, arg1 string, arg2 *LnsMap)(LnsAny, string)
         OnEndTunnel(_env *LnsEnv, arg1 *Types_ReqTunnelInfo)
 }
 func Lns_cast2Types_HandleIF( obj LnsAny ) LnsAny {

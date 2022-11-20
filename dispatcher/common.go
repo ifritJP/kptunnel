@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bytes"
 	"container/ring"
 	"crypto/sha256"
 	"fmt"
@@ -89,8 +88,7 @@ func (ringBuf *RingBuf) getCur() []byte {
 // コネクション情報
 type ConnInfo struct {
 	// コネクション
-	Conn        io.ReadWriteCloser
-	writeBuffer bytes.Buffer
+	Conn io.ReadWriteCloser
 }
 
 // ConnInfo の生成
@@ -101,5 +99,5 @@ type ConnInfo struct {
 // @param sessionInfo セッション情報
 // @return ConnInfo
 func CreateConnInfo(conn io.ReadWriteCloser) *ConnInfo {
-	return &ConnInfo{conn, bytes.Buffer{}}
+	return &ConnInfo{conn}
 }

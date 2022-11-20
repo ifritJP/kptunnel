@@ -127,7 +127,7 @@ func StartHeavyClient(serverInfo HostInfo) {
 
 func listenTcpServer(
 	local net.Listener, param *TunnelParam, forwardList []ForwardInfo,
-	process func(connInfo *ConnInfo)) {
+	process func(*ConnInfo, *ListenGroup, []ForwardInfo)) {
 	conn, err := local.Accept()
 	if err != nil {
 		log.Fatal(err)
@@ -146,18 +146,21 @@ func listenTcpServer(
 	tunnelParam := *param
 	connInfo := CreateConnInfo(
 		conn, tunnelParam.encPass, tunnelParam.encCount, nil, true)
-	newSession := false
+	//newSession := false
 	remoteAddrTxt := fmt.Sprintf("%s", conn.RemoteAddr())
-	if newSession, err = ProcessServerAuth(
+	var retForwardList []ForwardInfo
+	if _, retForwardList, err = ProcessServerAuth(
 		connInfo, &tunnelParam, remoteAddrTxt, forwardList); err != nil {
 		connInfo.SessionInfo.SetState(Session_state_authmiss)
 
 		log.Print("auth error: ", err)
 		time.Sleep(3 * time.Second)
 	} else {
-		if newSession {
-			process(connInfo)
-		}
+		listenGroup, localForwardList := NewListen(false, retForwardList)
+		defer listenGroup.Close()
+
+		//log.Print("process")
+		process(connInfo, listenGroup, localForwardList)
 	}
 }
 
@@ -169,12 +172,10 @@ func StartServer(param *TunnelParam, forwardList []ForwardInfo) {
 	}
 	defer local.Close()
 
-	listenGroup, localForwardList := NewListen(false, forwardList)
-	defer listenGroup.Close()
-
 	for {
 		listenTcpServer(local, param, forwardList,
-			func(connInfo *ConnInfo) {
+			func(connInfo *ConnInfo,
+				listenGroup *ListenGroup, localForwardList []ForwardInfo) {
 				ListenAndNewConnect(
 					false, listenGroup, localForwardList,
 					connInfo, param, GetSessionConn)
@@ -190,12 +191,10 @@ func StartReverseServer(param *TunnelParam, forwardList []ForwardInfo) {
 	}
 	defer local.Close()
 
-	listenGroup, localForwardList := NewListen(false, forwardList)
-	defer listenGroup.Close()
-
 	for {
 		listenTcpServer(local, param, forwardList,
-			func(connInfo *ConnInfo) {
+			func(connInfo *ConnInfo,
+				listenGroup *ListenGroup, localForwardList []ForwardInfo) {
 				ListenAndNewConnect(
 					false, listenGroup, localForwardList,
 					connInfo, param, GetSessionConn)
@@ -239,23 +238,22 @@ func (handler WrapWSHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 
 func execWebSocketServer(
 	param TunnelParam, forwardList []ForwardInfo,
-	connectSession func(conn *ConnInfo, param *TunnelParam)) {
+	connectSession func(*ConnInfo, *TunnelParam, *ListenGroup, []ForwardInfo)) {
 
 	// WebSocket 接続時のハンドラ
 	handle := func(ws *websocket.Conn, remoteAddr string) {
 		connInfo := CreateConnInfo(ws, param.encPass, param.encCount, nil, true)
-		if newSession, err := ProcessServerAuth(
+		if _, retForwardList, err := ProcessServerAuth(
 			connInfo, &param, remoteAddr, forwardList); err != nil {
 			connInfo.SessionInfo.SetState(Session_state_authmiss)
 			log.Print("auth error: ", err)
 			time.Sleep(3 * time.Second)
 			return
 		} else {
-			if newSession {
-				connectSession(connInfo, &param)
-			} else {
-				connectSession(connInfo, &param)
-			}
+			listenGroup, localForwardList := NewListen(false, retForwardList)
+			defer listenGroup.Close()
+
+			connectSession(connInfo, &param, listenGroup, localForwardList)
 		}
 	}
 
@@ -271,12 +269,10 @@ func execWebSocketServer(
 func StartWebsocketServer(param *TunnelParam, forwardList []ForwardInfo) {
 	log.Print("start websocket -- ", param.serverInfo.toStr())
 
-	listenGroup, localForwardList := NewListen(false, forwardList)
-	defer listenGroup.Close()
-
 	execWebSocketServer(
 		*param, forwardList,
-		func(connInfo *ConnInfo, tunnelParam *TunnelParam) {
+		func(connInfo *ConnInfo, tunnelParam *TunnelParam,
+			listenGroup *ListenGroup, localForwardList []ForwardInfo) {
 			ListenAndNewConnect(
 				false, listenGroup, localForwardList,
 				connInfo, tunnelParam, GetSessionConn)
@@ -286,12 +282,10 @@ func StartWebsocketServer(param *TunnelParam, forwardList []ForwardInfo) {
 func StartReverseWebSocketServer(param *TunnelParam, forwardList []ForwardInfo) {
 	log.Print("start reverse websocket -- ", param.serverInfo.toStr())
 
-	listenGroup, localForwardList := NewListen(false, forwardList)
-	defer listenGroup.Close()
-
 	execWebSocketServer(
 		*param, forwardList,
-		func(connInfo *ConnInfo, tunnelParam *TunnelParam) {
+		func(connInfo *ConnInfo, tunnelParam *TunnelParam,
+			listenGroup *ListenGroup, localForwardList []ForwardInfo) {
 			ListenAndNewConnect(
 				false, listenGroup, localForwardList,
 				connInfo, tunnelParam, GetSessionConn)

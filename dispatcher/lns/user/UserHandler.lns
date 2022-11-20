@@ -7,7 +7,7 @@ pub class UserHandler extend (Types.HandleIF) {
    }
 
    pub fn getTunnelInfo(
-      uri:str, headerMap:&Map<str,&List<str>> ) mut : &Types.ReqTunnelInfo
+      uri:str, headerMap:&Map<str,&List<str>> ) mut : &Types.ReqTunnelInfo!, str
    {
       print( __func__ );
       self.port = self.port + 1;
@@ -21,11 +21,11 @@ pub class UserHandler extend (Types.HandleIF) {
          }
       }
 
-      let mode = "r-server";
+      let mode = "server";
       return new Types.ReqTunnelInfo(
-         "localhost", self.port, mode,
+         "localhost", self.port, .OneShot, mode,
          [ "../kptunnel", mode, ":%d" (self.port),
-           ":%d,192.168.0.101:22" (10000 + self.port) ] );
+           ":%d,192.168.0.101:22" (10000 + self.port) ] ), "";
    }
    pub fn onEndTunnel( tunnelInfo:&Types.ReqTunnelInfo ) mut {
       print( __func__, tunnelInfo.$host, tunnelInfo.$port );

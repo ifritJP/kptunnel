@@ -38,7 +38,7 @@ class UserHandlerWrapper extend (Types.HandleIF) {
    }
    
    pub fn getTunnelInfo(
-      uri:str, headerMap:&Map<str,&List<str>> ) __noasync mut : &Types.ReqTunnelInfo
+      uri:str, headerMap:&Map<str,&List<str>> ) __noasync mut : &Types.ReqTunnelInfo!, str
    {
       let mut luaval:Luaval<stem>! = nil;
       let mut val:stem! = nil;
@@ -53,7 +53,7 @@ class UserHandlerWrapper extend (Types.HandleIF) {
          let info, mess = Types.ReqTunnelInfo._fromStem( val );
          when! info, luaval {
             self.reqTunnelInfoMap[ info ] = luaval;
-            return info;
+            return info, "";
          }
          error( "failed to fromStem -- %s" ( mess) );
       }
@@ -68,21 +68,17 @@ class UserHandlerWrapper extend (Types.HandleIF) {
    }
 }
 
-class DefaultHandler extend (Types.HandleIF, Types.AsyncHandleIF ) {
+class DefaultHandler extend (Types.HandleIF ) {
+   let mut nextMode:Types.ConnectMode;
    let mut port:int;
    local fn __init() {
       self.port = 10000;
+      self.nextMode = .CanReconnect;
    }
 
-   pub fn canAccept( uri:str, headerMap:&Map<str,&List<str>> ) __async mut : int, str {
-      return 200, "";
-   }
-   
    pub fn getTunnelInfo(
-      uri:str, headerMap:&Map<str,&List<str>> ) __noasync mut : &Types.ReqTunnelInfo
+      uri:str, headerMap:&Map<str,&List<str>> ) __noasync mut : &Types.ReqTunnelInfo!, str
    {
-      self.port = self.port + 1;
-
       // return new ReqTunnelInfo( 400, "hoge error", "", 0, "", [] );
       
       print( __func__, "url", uri );
@@ -92,11 +88,28 @@ class DefaultHandler extend (Types.HandleIF, Types.AsyncHandleIF ) {
          }
       }
 
-      let mode = "r-server";
+      let connectMode = self.nextMode;
+      switch connectMode {
+         case .CanReconnect {
+            self.port = self.port + 1;
+            self.nextMode = .Reconnect;
+         }
+         case .Reconnect {
+            self.nextMode = .Disconnect;
+         }
+         case .Disconnect {
+            self.nextMode = .CanReconnect;
+         }
+         default {
+            return nil, "illegal mode -- %s" (connectMode.$_txt);
+         }
+      }
+
+      let mode = "server";
       return new Types.ReqTunnelInfo(
-         "localhost", self.port, mode,
+         "localhost", self.port, connectMode, mode,
          [ "../kptunnel", mode, ":%d" (self.port),
-           ":%d,192.168.0.101:22" (10000 + self.port) ] );
+           ":%d,192.168.0.101:22" (10000 + self.port) ] ), "";
    }
    pub fn onEndTunnel( tunnelInfo:&Types.ReqTunnelInfo ) __noasync mut {
       print( __func__, tunnelInfo.$host, tunnelInfo.$port );
@@ -189,31 +202,35 @@ pub fn setupHandle( path:str ) : bool {
 
 pub fn canAccept( uri:str, headerMap:&Map<str,&List<str>> ) : int, str
 {
-
    let mut asyncHandler:UserAsyncHandlerWrapper! = nil;
-   
-   __luaDepend {
-      if! let func = loadScript( canAcceptLuaCode, "createHandler", "createHandler" ) {
-         if! let mut obj = func(##) {
-            asyncHandler = new UserAsyncHandlerWrapper( obj );
-         } else {
-            print( "illegal return value -- " );
+
+   if canAcceptLuaCode ~= "" {
+      // canAccept は非同期で行なうので、毎回 loadScript する必要がある。
+      // 毎回 loadScript しないと、スレッドが違って動かない。
+      __luaDepend {
+         if! let func = loadScript( canAcceptLuaCode, "createHandler", "createHandler" ) {
+            if! let mut obj = func(##) {
+               asyncHandler = new UserAsyncHandlerWrapper( obj );
+            } else {
+               print( "illegal return value -- " );
+            }
          }
       }
+      when! asyncHandler {
+         return asyncHandler.canAccept( uri, headerMap )**;
+      }
    }
-   when! asyncHandler {
-      return asyncHandler.canAccept( uri, headerMap )**;
-   }
-   return 500, "internal error";
+   return 200, "";
 }
 
-pub fn getTunnelInfo( uri:str, headerMap:&Map<str,&List<str>> ) : &Types.ReqTunnelInfo
+pub fn getTunnelInfo(
+   uri:str, headerMap:&Map<str,&List<str>> ) : &Types.ReqTunnelInfo!, str
 {
-   let info;
+   let info, mess;
    __asyncLock {
-      info = handler.getTunnelInfo( uri, headerMap );
+      info, mess = handler.getTunnelInfo( uri, headerMap );
    }
-   return info;
+   return info, mess;
 }
 
 

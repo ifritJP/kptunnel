@@ -100,7 +100,7 @@ func StartHeavyClient(serverInfo HostInfo) {
 type TunnelInfo struct {
 	env           *LnsEnv
 	cmd           *exec.Cmd
-	reconnect     bool
+	connectMode   string
 	host          string
 	port          int
 	mode          string
@@ -114,10 +114,10 @@ type WrapWSHandler struct {
 	param  *TunnelParam
 }
 
-var host2TunnelInfo map[string]*TunnelInfo = map[string]*TunnelInfo{}
+var hostPort2TunnelInfo map[string]*TunnelInfo = map[string]*TunnelInfo{}
 
-// host2TunnelInfo への排他
-var host2TunnelInfo_mutex sync.Mutex
+// hostPort2TunnelInfo への排他
+var hostPort2TunnelInfo_mutex sync.Mutex
 
 func processRequest(env *LnsEnv, req *http.Request) (int, string, *TunnelInfo) {
 	statusCode, message := lns.Handle_canAccept(
@@ -127,8 +127,12 @@ func processRequest(env *LnsEnv, req *http.Request) (int, string, *TunnelInfo) {
 		return statusCode, message, nil
 	}
 
-	reqTunnelInfo := lns.Handle_getTunnelInfo(
+	workReqTunnelInfo, errMess := lns.Handle_getTunnelInfo(
 		env, req.URL.String(), Lns_mapFromGo(req.Header))
+	if workReqTunnelInfo == nil {
+		return 500, errMess, nil
+	}
+	reqTunnelInfo := workReqTunnelInfo.(*lns.Types_ReqTunnelInfo)
 
 	commands := []string{}
 
@@ -136,13 +140,15 @@ func processRequest(env *LnsEnv, req *http.Request) (int, string, *TunnelInfo) {
 		commands = append(commands, val.(string))
 	}
 
-	hostPort := fmt.Sprintf(
-		"%s:%d", reqTunnelInfo.Get_host(env), reqTunnelInfo.Get_port(env))
+	host := reqTunnelInfo.Get_host(env)
+	port := reqTunnelInfo.Get_port(env)
+	hostPort := fmt.Sprintf("%s:%d", host, port)
 	info := &TunnelInfo{
 		env:           env,
 		cmd:           nil,
-		host:          reqTunnelInfo.Get_host(env),
-		port:          reqTunnelInfo.Get_port(env),
+		connectMode:   reqTunnelInfo.Get_connectMode(env),
+		host:          host,
+		port:          port,
 		mode:          reqTunnelInfo.Get_mode(env),
 		commands:      commands,
 		reqTunnelInfo: reqTunnelInfo,
@@ -218,6 +224,7 @@ func StartWebsocketServer(param *TunnelParam) {
 }
 
 func transportConn(finChan chan bool, message string, src io.Reader, dst io.Writer) {
+	log.Printf("start: %s", message)
 	bufSize := 1000 * 10
 	buf := make([]byte, bufSize)
 	for {
@@ -239,14 +246,21 @@ func transportConn(finChan chan bool, message string, src io.Reader, dst io.Writ
 func stopTunnel(info *TunnelInfo) {
 	log.Printf("stopTunnel -- %s", info)
 
-	host2TunnelInfo_mutex.Lock()
-	delete(host2TunnelInfo, info.hostPort)
-	host2TunnelInfo_mutex.Unlock()
+	hostPort2TunnelInfo_mutex.Lock()
+	orgInfo, exist := hostPort2TunnelInfo[info.hostPort]
+	delete(hostPort2TunnelInfo, info.hostPort)
+	hostPort2TunnelInfo_mutex.Unlock()
 
-	defer onEndTunnel(info.env, info.reqTunnelInfo)
+	if !exist {
+		log.Printf("not found -- %s", info.hostPort)
+		return
+	}
+
+	// ハンドラへ終了通知
+	defer onEndTunnel(info.env, orgInfo.reqTunnelInfo)
 
 	var mode string
-	switch info.mode {
+	switch orgInfo.mode {
 	case "server":
 		mode = "client"
 	case "r-server":
@@ -256,24 +270,22 @@ func stopTunnel(info *TunnelInfo) {
 	case "r-wsserver":
 		mode = "r-wsclient"
 	default:
-		log.Fatalf("unknown mode -- %s", info.mode)
+		log.Fatalf("unknown mode -- %s", orgInfo.mode)
 	}
 
 	command := []string{mode, "-ctrl", "stop", info.hostPort}
-	log.Printf("%v", command)
-	killCmd := exec.Command(info.commands[0], command...)
+	log.Printf("stop-command: %v", command)
+	killCmd := exec.Command(orgInfo.commands[0], command...)
 	if err := killCmd.Run(); err != nil {
 		log.Printf("error run -- %s", err)
 		return
 	}
 	// Start() したプロセスは Wait() してやらないと、 defunct になってしまう。
-	info.cmd.Wait()
+	orgInfo.cmd.Wait()
 	log.Printf("end to wait -- %s", info.hostPort)
 }
 
 func processToTransfer(conn *ConnInfo, info *TunnelInfo) {
-	log.Printf("launch server app")
-
 	dstConn, err := net.Dial("tcp", info.hostPort)
 	if err != nil {
 		log.Printf("processConnection: conn->dst: %s", err)
@@ -282,10 +294,14 @@ func processToTransfer(conn *ConnInfo, info *TunnelInfo) {
 
 	finChan := make(chan bool, 1)
 
-	log.Printf("connect %s", info)
+	log.Printf("connect to %s", info.hostPort)
 
-	go transportConn(finChan, "processConnection: conn->dst", conn.Conn, dstConn)
-	go transportConn(finChan, "processConnection: dst->conn", dstConn, conn.Conn)
+	go transportConn(
+		finChan, fmt.Sprintf("%s:processConnection: conn->dst", info.connectMode),
+		conn.Conn, dstConn)
+	go transportConn(
+		finChan, fmt.Sprintf("%s:processConnection: dst->conn", info.connectMode),
+		dstConn, conn.Conn)
 
 	<-finChan
 
@@ -343,10 +359,10 @@ func startTunnelApp(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) bool {
 
 	info.cmd = cmd
 
-	// host2TunnelInfo に info を登録
-	host2TunnelInfo_mutex.Lock()
-	host2TunnelInfo[info.hostPort] = info
-	host2TunnelInfo_mutex.Unlock()
+	// hostPort2TunnelInfo に info を登録
+	hostPort2TunnelInfo_mutex.Lock()
+	hostPort2TunnelInfo[info.hostPort] = info
+	hostPort2TunnelInfo_mutex.Unlock()
 
 	return true
 }
@@ -359,15 +375,23 @@ func processConnection(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) {
 	}
 
 	if info.cmd == nil {
-		if !startTunnelApp(conn, param, info) {
-			return
+		if info.connectMode == "CanReconnect" || info.connectMode == "OneShot" {
+			if !startTunnelApp(conn, param, info) {
+				return
+			}
+			if info.connectMode == "OneShot" {
+				// oneShot の場合、 tunnel アプリを落す
+				defer stopTunnel(info)
+			}
+			// Tunnel アプリとの通信中継
+			processToTransfer(conn, info)
+		} else if info.connectMode == "Reconnect" {
+			// 再接続の場合は、転送だけ行なう
+			processToTransfer(conn, info)
+		} else if info.connectMode == "Disconnect" {
+			stopTunnel(info)
 		}
-		defer stopTunnel(info)
 	}
-
-	// Tunnel アプリとの通信中継
-	processToTransfer(conn, info)
-	//<-finChan
 }
 
 func SimpleConsole(conn io.ReadWriter) {
@@ -379,5 +403,4 @@ func SimpleConsole(conn io.ReadWriter) {
 	go transportConn(finChan, "SimpleConsole: dst->conn", os.Stdin, conn)
 
 	<-finChan
-	//<-finChan
 }

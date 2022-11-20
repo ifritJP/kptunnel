@@ -142,6 +142,7 @@ func ParseOpt(
 	prof := cmd.String("prof", "", "profile port. (:1234)")
 	console := cmd.String("console", "", "console port. (:1234)")
 	verbose := cmd.Bool("verbose", false, "verbose. (true or false)")
+	omitForward := cmd.Bool("omit", false, "omit forward")
 
 	usage := func() {
 		fmt.Fprintf(cmd.Output(), "\nUsage: %s %s <server> ", os.Args[0], mode)
@@ -220,11 +221,14 @@ func ParseOpt(
 	param := TunnelParam{
 		pass, mode, maskIP, encPass, *encCount, *interval * 1000,
 		getKey(magic), 0, *serverInfo, http.Header{}}
-	if *ctrl == "bench" {
-		param.ctrl = CTRL_BENCH
-	}
-	if *ctrl == "stop" {
-		param.ctrl = CTRL_STOP
+	if *ctrl != "" {
+		*omitForward = true
+		if *ctrl == "bench" {
+			param.ctrl = CTRL_BENCH
+		}
+		if *ctrl == "stop" {
+			param.ctrl = CTRL_STOP
+		}
 	}
 
 	if *prof != "" {
@@ -285,9 +289,9 @@ func ParseOpt(
 			ForwardInfo{
 				IsReverseTunnel: isReverseForward, Src: *srcInfo, Dst: *remoteInfo})
 	}
-	if mode == "r-server" || mode == "r-wsserver" ||
-		mode == "client" || mode == "wsclient" {
-		if len(forwardList) == 0 {
+	if !*omitForward && len(forwardList) == 0 {
+		if mode == "r-server" || mode == "r-wsserver" ||
+			mode == "client" || mode == "wsclient" {
 			fmt.Print("set forward!")
 			usage()
 		}

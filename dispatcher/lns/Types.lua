@@ -90,24 +90,61 @@ end
 if not _lune7 then
    _lune7 = _lune
 end
+local ConnectMode = {}
+_moduleObj.ConnectMode = ConnectMode
+ConnectMode._val2NameMap = {}
+function ConnectMode:_getTxt( val )
+   local name = self._val2NameMap[ val ]
+   if name then
+      return string.format( "ConnectMode.%s", name )
+   end
+   return string.format( "illegal val -- %s", val )
+end
+function ConnectMode._from( val )
+   if ConnectMode._val2NameMap[ val ] then
+      return val
+   end
+   return nil
+end
+    
+ConnectMode.__allList = {}
+function ConnectMode.get__allList()
+   return ConnectMode.__allList
+end
+
+ConnectMode.Disconnect = 'Disconnect'
+ConnectMode._val2NameMap['Disconnect'] = 'Disconnect'
+ConnectMode.__allList[1] = ConnectMode.Disconnect
+ConnectMode.OneShot = 'OneShot'
+ConnectMode._val2NameMap['OneShot'] = 'OneShot'
+ConnectMode.__allList[2] = ConnectMode.OneShot
+ConnectMode.CanReconnect = 'CanReconnect'
+ConnectMode._val2NameMap['CanReconnect'] = 'CanReconnect'
+ConnectMode.__allList[3] = ConnectMode.CanReconnect
+ConnectMode.Reconnect = 'Reconnect'
+ConnectMode._val2NameMap['Reconnect'] = 'Reconnect'
+ConnectMode.__allList[4] = ConnectMode.Reconnect
+
+
 local ReqTunnelInfo = {}
 setmetatable( ReqTunnelInfo, { ifList = {Mapping,} } )
 _moduleObj.ReqTunnelInfo = ReqTunnelInfo
 function ReqTunnelInfo._setmeta( obj )
   setmetatable( obj, { __index = ReqTunnelInfo  } )
 end
-function ReqTunnelInfo._new( host, port, mode, tunnelArgList )
+function ReqTunnelInfo._new( host, port, connectMode, mode, tunnelArgList )
    local obj = {}
    ReqTunnelInfo._setmeta( obj )
    if obj.__init then
-      obj:__init( host, port, mode, tunnelArgList )
+      obj:__init( host, port, connectMode, mode, tunnelArgList )
    end
    return obj
 end
-function ReqTunnelInfo:__init( host, port, mode, tunnelArgList )
+function ReqTunnelInfo:__init( host, port, connectMode, mode, tunnelArgList )
 
    self.host = host
    self.port = port
+   self.connectMode = connectMode
    self.mode = mode
    self.tunnelArgList = tunnelArgList
 end
@@ -116,6 +153,9 @@ function ReqTunnelInfo:get_host()
 end
 function ReqTunnelInfo:get_port()
    return self.port
+end
+function ReqTunnelInfo:get_connectMode()
+   return self.connectMode
 end
 function ReqTunnelInfo:get_mode()
    return self.mode
@@ -141,6 +181,7 @@ function ReqTunnelInfo._fromMapSub( obj, val )
    local memInfo = {}
    table.insert( memInfo, { name = "host", func = _lune._toStr, nilable = false, child = {} } )
    table.insert( memInfo, { name = "port", func = _lune._toInt, nilable = false, child = {} } )
+   table.insert( memInfo, { name = "connectMode", func = ConnectMode._from, nilable = false, child = {} } )
    table.insert( memInfo, { name = "mode", func = _lune._toStr, nilable = false, child = {} } )
    table.insert( memInfo, { name = "tunnelArgList", func = _lune._toList, nilable = false, child = { { func = _lune._toStr, nilable = false, child = {} } } } )
    local result, mess = _lune._fromMap( obj, val, memInfo )
