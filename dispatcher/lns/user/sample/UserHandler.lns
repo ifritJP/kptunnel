@@ -25,7 +25,7 @@ pub class UserHandler extend (Types.HandleIF) {
       return new Types.ReqTunnelInfo(
          "localhost", self.port, .OneShot, mode,
          [ "../kptunnel", mode, ":%d" (self.port),
-           ":%d,192.168.0.101:22" (10000 + self.port) ] ), "";
+           ":%d,192.168.0.101:22" (10000 + self.port) ], {} ), "";
    }
    pub fn onEndTunnel( tunnelInfo:&Types.ReqTunnelInfo ) mut {
       print( __func__, tunnelInfo.$host, tunnelInfo.$port );

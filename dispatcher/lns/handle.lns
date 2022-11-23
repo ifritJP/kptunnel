@@ -92,7 +92,8 @@ class DefaultHandler extend (Types.HandleIF ) {
       return new Types.ReqTunnelInfo(
          "localhost", self.port, connectMode, mode,
          [ "../kptunnel", mode, ":%d" (self.port),
-           ":%d,192.168.0.101:22" (10000 + self.port) ] ), "";
+           ":%d,192.168.0.101:22" (10000 + self.port) ],
+         { "GOGC":"50" } ), "";
    }
    pub fn onEndTunnel( tunnelInfo:&Types.ReqTunnelInfo ) __noasync mut {
       print( __func__, tunnelInfo.$host, tunnelInfo.$port );

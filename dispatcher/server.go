@@ -109,6 +109,7 @@ type TunnelInfo struct {
 	reqTunnelInfo *lns.Types_ReqTunnelInfo
 	session       string
 	hostPort      string
+	envMap        map[string]string
 }
 
 type WrapWSHandler struct {
@@ -174,9 +175,13 @@ func processRequest(env *LnsEnv, req *http.Request) (int, string, *TunnelInfo) {
 	reqTunnelInfo := workReqTunnelInfo.(*lns.Types_ReqTunnelInfo)
 
 	commands := []string{}
-
 	for _, val := range reqTunnelInfo.Get_tunnelArgList(env).Items {
 		commands = append(commands, val.(string))
+	}
+
+	envMap := map[string]string{}
+	for key, val := range reqTunnelInfo.Get_envMap(env).Items {
+		envMap[key.(string)] = val.(string)
 	}
 
 	host := reqTunnelInfo.Get_host(env)
@@ -193,6 +198,7 @@ func processRequest(env *LnsEnv, req *http.Request) (int, string, *TunnelInfo) {
 		reqTunnelInfo: reqTunnelInfo,
 		session:       session,
 		hostPort:      hostPort,
+		envMap:        envMap,
 	}
 	return statusCode, "", info
 }
@@ -353,6 +359,11 @@ func startTunnelApp(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) bool {
 	log.Printf("run %s", info)
 
 	cmd := exec.Command(info.commands[0], info.commands[1:]...)
+	for key, val := range info.envMap {
+		envVal := fmt.Sprintf("%s=%s", key, val)
+		log.Printf("env: %s", envVal)
+		cmd.Env = append(cmd.Environ(), envVal)
+	}
 	reader, err := cmd.StderrPipe()
 	if err != nil {
 		log.Printf("failed to get the stdout from the tunnel.%s", err)

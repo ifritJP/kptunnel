@@ -1,24 +1,57 @@
 pub enum ConnectMode {
+   /**
+切断時の再接続を行なわない。
+切断時 kptunnel server プロセスは落ちる。
+*/
    OneShot = "OneShot",
+   /**
+切断時の再接続を行なう。
+明示的に Disconnect されない限り、 kptunnel server プロセスは残り続ける。
+   */
    CanReconnect = "CanReconnect",
 }
 
 
 pub class ReqTunnelInfo extend (Mapping) {
+   /** kptunnel を動かすサーバ。通常は localhost */
    let host:str {pub};
+   /** kptunnel server を動かすポート。 */
    let port:int {pub};
+   /** 接続モード */
    let connectMode:ConnectMode {pub};
+   /** kptunnel のモード */
    let mode:str {pub};
+   /** kptunnel を実行するコマンドライン */
    let tunnelArgList:&List<str> {pub};
+   /** kptunnel を実行する際の環境変数。 変数名 → 値 */
+   let envMap:&Map<str,str> {pub};
+}
+
+pub interface AsyncHandleIF {
+   /**
+uri, headerMap の接続要求を受け付けるかどうかを判定する
+
+@param uri 接続要求時の URI
+@param headerMap 接続要求時の headerMap
+@return http status。 要求を受け付ける場合 200。
+@return str 接続結果を示すメッセージ
+*/
+   pub fn canAccept( uri:str, headerMap:&Map<str,&List<str>> ) __async mut : int, str;
 }
 
 pub interface HandleIF {
+   /** ReqTunnelInfo を取得する
+
+canAccept() で要求を受け付けた場合にコールバックされる。
+
+@param uri 接続要求時の URI
+@param headerMap 接続要求時の headerMap
+@return ReqTunnelInfo 起動する kptunnel 情報。 起動させない場合は nil.
+@return str 結果を示すメッセージ
+*/
    pub fn getTunnelInfo( uri:str, headerMap:&Map<str,&List<str>> ) __noasync mut : &ReqTunnelInfo!, str;
+   /** tunnelInfo の tunnel 終了時のコールバック */
    pub fn onEndTunnel( tunnelInfo:&ReqTunnelInfo ) __noasync mut;
 }
 
 pub form CreateHandlerFunc(): HandleIF;
-
-pub interface AsyncHandleIF {
-   pub fn canAccept( uri:str, headerMap:&Map<str,&List<str>> ) __async mut : int, str;
-}

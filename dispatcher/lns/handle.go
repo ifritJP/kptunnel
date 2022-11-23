@@ -29,8 +29,8 @@ func conv2Form0_464( src func (_env *LnsEnv)) LnsForm {
         return []LnsAny{}
     }
 }
-// for 130: ExpCast
-func conv2Form0_756( src func (_env *LnsEnv)) LnsForm {
+// for 131: ExpCast
+func conv2Form0_764( src func (_env *LnsEnv)) LnsForm {
     return func (_env *LnsEnv,  argList []LnsAny) []LnsAny {
         src(_env)
         return []LnsAny{}
@@ -40,20 +40,20 @@ func conv2Form0_756( src func (_env *LnsEnv)) LnsForm {
 func handle_convExp0_316(arg1 []LnsAny) (LnsAny, LnsAny) {
     return Lns_getFromMulti( arg1, 0 ), Lns_getFromMulti( arg1, 1 )
 }
-// for 128
-func handle_convExp0_789(arg1 []LnsAny) LnsAny {
+// for 129
+func handle_convExp0_797(arg1 []LnsAny) LnsAny {
     return Lns_getFromMulti( arg1, 0 )
 }
-// for 174
-func handle_convExp0_992(arg1 []LnsAny) LnsAny {
+// for 175
+func handle_convExp0_1000(arg1 []LnsAny) LnsAny {
     return Lns_getFromMulti( arg1, 0 )
 }
-// for 195
-func handle_convExp0_1057(arg1 []LnsAny) LnsAny {
+// for 196
+func handle_convExp0_1065(arg1 []LnsAny) LnsAny {
     return Lns_getFromMulti( arg1, 0 )
 }
-// for 214
-func handle_convExp0_1109(arg1 []LnsAny) (LnsAny, string) {
+// for 215
+func handle_convExp0_1117(arg1 []LnsAny) (LnsAny, string) {
     return Lns_getFromMulti( arg1, 0 ), Lns_getFromMulti( arg1, 1 ).(string)
 }
 // for 47
@@ -64,20 +64,20 @@ func handle_convExp0_368(arg1 []LnsAny) LnsAny {
 func handle_convExp0_405(arg1 []LnsAny) (LnsAny, LnsAny) {
     return Lns_getFromMulti( arg1, 0 ), Lns_getFromMulti( arg1, 1 )
 }
-// for 106
-func handle_convExp0_641(arg1 []LnsAny) LnsAny {
+// for 107
+func handle_convExp0_649(arg1 []LnsAny) LnsAny {
     return Lns_getFromMulti( arg1, 0 )
 }
-// for 126
-func handle_convExp0_732(arg1 []LnsAny) (LnsAny, LnsAny) {
+// for 127
+func handle_convExp0_740(arg1 []LnsAny) (LnsAny, LnsAny) {
     return Lns_getFromMulti( arg1, 0 ), Lns_getFromMulti( arg1, 1 )
 }
-// 105: decl @lns.@handle.convScript
+// 106: decl @lns.@handle.convScript
 func handle_convScript_3_(_env *LnsEnv, path string) LnsAny {
     var fileObj Lns_luaStream
     
     {
-        _fileObj := handle_convExp0_641(Lns_2DDD(Lns_io_open(path, nil)))
+        _fileObj := handle_convExp0_649(Lns_2DDD(Lns_io_open(path, nil)))
         if _fileObj == nil{
             Lns_print([]LnsAny{_env.GetVM().String_format("failed to open -- %s", []LnsAny{path})})
             return nil
@@ -97,7 +97,7 @@ func handle_convScript_3_(_env *LnsEnv, path string) LnsAny {
         }
     }
     var luaCode string
-    Lns_LockEnvSync( _env, 116, func () {
+    Lns_LockEnvSync( _env, 117, func () {
         var option *LnsOpt.Option_Option
         option = LnsOpt.Option_analyze(_env, NewLnsList([]LnsAny{path, "lua"}))
         luaCode = LnsFront.Front_convertLnsCode2LuaCodeWithOpt(_env, option, lnsCode, path, nil)
@@ -105,7 +105,7 @@ func handle_convScript_3_(_env *LnsEnv, path string) LnsAny {
     return luaCode
 }
 
-// 123: decl @lns.@handle.loadScript
+// 124: decl @lns.@handle.loadScript
 func handle_loadScript_4_(_env *LnsEnv, luaCode string,path string,funcName string) LnsAny {
     var _func LnsAny
     _func = nil
@@ -115,7 +115,7 @@ func handle_loadScript_4_(_env *LnsEnv, luaCode string,path string,funcName stri
         if loaded != nil{
             loaded_128 := loaded.(*Lns_luaValue)
             {
-                _mod := handle_convExp0_789(Lns_2DDD(_env.GetVM().RunLoadedfunc(loaded_128,Lns_2DDD([]LnsAny{}))))
+                _mod := handle_convExp0_797(Lns_2DDD(_env.GetVM().RunLoadedfunc(loaded_128,Lns_2DDD([]LnsAny{}))))
                 if !Lns_IsNil( _mod ) {
                     mod := _mod
                     {
@@ -137,7 +137,7 @@ func handle_loadScript_4_(_env *LnsEnv, luaCode string,path string,funcName stri
     return _func
 }
 
-// 144: decl @lns.@handle.setupHandle
+// 145: decl @lns.@handle.setupHandle
 func Handle_setupHandle(_env *LnsEnv, path string) bool {
     var list *LnsList
     list = LnsUtil.Util_splitStr(_env, path, "[^,]+")
@@ -175,13 +175,13 @@ func Handle_setupHandle(_env *LnsEnv, path string) bool {
     }
     var result bool
     result = false
-    Lns_LockEnvSync( _env, 172, func () {
+    Lns_LockEnvSync( _env, 173, func () {
         {
             __func := handle_loadScript_4_(_env, luaCode, handlePath, "createHandler")
             if !Lns_IsNil( __func ) {
                 _func := __func.(*Lns_luaValue)
                 {
-                    _obj := handle_convExp0_992(Lns_2DDD(_env.GetVM().RunLoadedfunc(_func,Lns_2DDD([]LnsAny{}))))
+                    _obj := handle_convExp0_1000(Lns_2DDD(_env.GetVM().RunLoadedfunc(_func,Lns_2DDD([]LnsAny{}))))
                     if !Lns_IsNil( _obj ) {
                         obj := _obj
                         handle_handler = Newhandle_UserHandlerWrapper(_env, obj).FP
@@ -196,7 +196,7 @@ func Handle_setupHandle(_env *LnsEnv, path string) bool {
     return result
 }
 
-// 186: decl @lns.@handle.canAccept
+// 187: decl @lns.@handle.canAccept
 func Handle_canAccept(_env *LnsEnv, uri string,headerMap *LnsMap)(LnsInt, string) {
     var asyncHandler LnsAny
     asyncHandler = nil
@@ -206,7 +206,7 @@ func Handle_canAccept(_env *LnsEnv, uri string,headerMap *LnsMap)(LnsInt, string
                 if !Lns_IsNil( __func ) {
                     _func := __func.(*Lns_luaValue)
                     {
-                        _obj := handle_convExp0_1057(Lns_2DDD(_env.GetVM().RunLoadedfunc(_func,Lns_2DDD([]LnsAny{}))))
+                        _obj := handle_convExp0_1065(Lns_2DDD(_env.GetVM().RunLoadedfunc(_func,Lns_2DDD([]LnsAny{}))))
                         if !Lns_IsNil( _obj ) {
                             obj := _obj
                             asyncHandler = Newhandle_UserAsyncHandlerWrapper(_env, obj)
@@ -224,19 +224,19 @@ func Handle_canAccept(_env *LnsEnv, uri string,headerMap *LnsMap)(LnsInt, string
     return 200, ""
 }
 
-// 209: decl @lns.@handle.getTunnelInfo
+// 210: decl @lns.@handle.getTunnelInfo
 func Handle_getTunnelInfo(_env *LnsEnv, uri string,headerMap *LnsMap)(LnsAny, string) {
     var info LnsAny
     var mess string
-    Lns_LockEnvSync( _env, 213, func () {
+    Lns_LockEnvSync( _env, 214, func () {
         info, mess = handle_handler.GetTunnelInfo(_env, uri, headerMap)
     })
     return info, mess
 }
 
-// 220: decl @lns.@handle.onEndTunnel
+// 221: decl @lns.@handle.onEndTunnel
 func Handle_onEndTunnel(_env *LnsEnv, tunnelInfo *Types_ReqTunnelInfo) {
-    Lns_LockEnvSync( _env, 221, func () {
+    Lns_LockEnvSync( _env, 222, func () {
         handle_handler.OnEndTunnel(_env, tunnelInfo)
     })
 }
@@ -323,9 +323,9 @@ func (self *handle_DefaultHandler) GetTunnelInfo(_env *LnsEnv, uri string,header
     connectMode = Types_ConnectMode__CanReconnect
     var mode string
     mode = "server"
-    return NewTypes_ReqTunnelInfo(_env, "localhost", self.port, connectMode, mode, NewLnsList([]LnsAny{"../kptunnel", mode, _env.GetVM().String_format(":%d", []LnsAny{self.port}), _env.GetVM().String_format(":%d,192.168.0.101:22", []LnsAny{10000 + self.port})})), ""
+    return NewTypes_ReqTunnelInfo(_env, "localhost", self.port, connectMode, mode, NewLnsList([]LnsAny{"../kptunnel", mode, _env.GetVM().String_format(":%d", []LnsAny{self.port}), _env.GetVM().String_format(":%d,192.168.0.101:22", []LnsAny{10000 + self.port})}), NewLnsMap( map[LnsAny]LnsAny{"GOGC":"50",})), ""
 }
-// 97: decl @lns.@handle.DefaultHandler.onEndTunnel
+// 98: decl @lns.@handle.DefaultHandler.onEndTunnel
 func (self *handle_DefaultHandler) OnEndTunnel(_env *LnsEnv, tunnelInfo *Types_ReqTunnelInfo) {
     __func__ := "@lns.@handle.DefaultHandler.onEndTunnel"
     Lns_print([]LnsAny{__func__, tunnelInfo.FP.Get_host(_env), tunnelInfo.FP.Get_port(_env)})

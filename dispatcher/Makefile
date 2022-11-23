@@ -1,5 +1,8 @@
 LNSC=lnsc
 
+SERVER=:10000
+
+
 ifneq "$(wildcard Makefile.local)" ""
 include Makefile.local
 endif
@@ -7,12 +10,13 @@ endif
 help:
 	@echo make setup
 	@echo make build
+	@echo make exe-server
 
 setup:
 	go mod tidy
 
 build:
-	$(LNSC) lns/Types.lns save -langGo -noLua
+	$(LNSC) lns/Types.lns save -langGo
 	$(LNSC) lns/handle.lns save -langGo -noLua
 	$(LNSC) lns/user/sample/UserHandler.lns lua > /dev/null
 	$(LNSC) lns/user/sample/canAccess.lns lua > /dev/null
@@ -21,4 +25,4 @@ build:
 
 
 exe-server:
-	./dispatcher wsserver :10000 -u lns/user/sample/UserHandler.lns,lns/user/sample/canAccess.lns
+	./dispatcher wsserver $(SERVER) -u lns/user/UserHandler.lns,lns/user/canAccess.lns
