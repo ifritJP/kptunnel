@@ -31,11 +31,17 @@ type HostInfo struct {
 	Port int
 	// パス
 	Path string
+	// query
+	Query string
 }
 
 // 接続先の文字列表現
 func (info *HostInfo) toStr() string {
-	return fmt.Sprintf("%s%s:%d%s", info.Scheme, info.Name, info.Port, info.Path)
+	work := fmt.Sprintf("%s%s:%d%s", info.Scheme, info.Name, info.Port, info.Path)
+	if info.Query != "" {
+		work = fmt.Sprintf("%s?%s", work, info.Query)
+	}
+	return work
 }
 
 // パスワードからキーを生成する

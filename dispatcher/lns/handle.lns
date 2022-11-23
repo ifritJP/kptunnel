@@ -69,11 +69,9 @@ class UserHandlerWrapper extend (Types.HandleIF) {
 }
 
 class DefaultHandler extend (Types.HandleIF ) {
-   let mut nextMode:Types.ConnectMode;
    let mut port:int;
    local fn __init() {
       self.port = 10000;
-      self.nextMode = .CanReconnect;
    }
 
    pub fn getTunnelInfo(
@@ -88,22 +86,7 @@ class DefaultHandler extend (Types.HandleIF ) {
          }
       }
 
-      let connectMode = self.nextMode;
-      switch connectMode {
-         case .CanReconnect {
-            self.port = self.port + 1;
-            self.nextMode = .Reconnect;
-         }
-         case .Reconnect {
-            self.nextMode = .Disconnect;
-         }
-         case .Disconnect {
-            self.nextMode = .CanReconnect;
-         }
-         default {
-            return nil, "illegal mode -- %s" (connectMode.$_txt);
-         }
-      }
+      let connectMode = Types.ConnectMode.CanReconnect;
 
       let mode = "server";
       return new Types.ReqTunnelInfo(

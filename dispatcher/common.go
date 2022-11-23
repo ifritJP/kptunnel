@@ -27,6 +27,11 @@ func (info *HostInfo) toStr() string {
 	return fmt.Sprintf("%s%s:%d%s", info.Scheme, info.Name, info.Port, info.Path)
 }
 
+// 接続先の文字列表現
+func (info *HostInfo) getHostPort() string {
+	return fmt.Sprintf("%s:%d", info.Name, info.Port)
+}
+
 // パスワードからキーを生成する
 func getKey(pass []byte) []byte {
 	sum := sha256.Sum256(pass)

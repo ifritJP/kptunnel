@@ -114,6 +114,14 @@ func ConnectWebScoket(
 	// proxyHost := "http://localhost:10080"
 	// userAgent := "test"
 
+	if param.ctrl == CTRL_STOP {
+		workUrl, _ := url.Parse(websocketUrl)
+		if workUrl.RawQuery != "" {
+			websocketUrl += "&"
+		}
+		websocketUrl += "mode=Disconnect"
+	}
+
 	log.Printf("%s, %s, %s", websocketUrl, proxyHost, userAgent)
 
 	conf, err := websocket.NewConfig(websocketUrl, "http://localhost")

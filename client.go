@@ -111,15 +111,22 @@ func StartWebSocketClient(
 	listenGroup, localForwardList := NewListen(true, forwardList)
 	defer listenGroup.Close()
 
+	reconnectUrl := serverInfo.toStr()
+	if serverInfo.Query != "" {
+		reconnectUrl += "&"
+	}
+	reconnectUrl += "mode=Reconnect"
+
 	reconnect := CreateToReconnectFunc(
 		func(sessionInfo *SessionInfo) ReconnectInfo {
 			_, reconnectInfo := ConnectWebScoket(
-				serverInfo.toStr(), proxyHost, userAgent,
+				reconnectUrl, proxyHost, userAgent,
 				&sessionParam, sessionInfo, forwardList)
 			return reconnectInfo
 		})
 	ListenAndNewConnect(
-		true, listenGroup, localForwardList, reconnectInfo.Conn, &sessionParam, reconnect)
+		true, listenGroup, localForwardList,
+		reconnectInfo.Conn, &sessionParam, reconnect)
 }
 
 func StartReverseWebSocketClient(
@@ -127,10 +134,16 @@ func StartReverseWebSocketClient(
 
 	sessionParam := *param
 
+	reconnectUrl := serverInfo.toStr()
+	if serverInfo.Query != "" {
+		reconnectUrl += "&"
+	}
+	reconnectUrl += "mode=Reconnect"
+
 	reconnect := CreateToReconnectFunc(
 		func(sessionInfo *SessionInfo) ReconnectInfo {
 			_, reconnectInfo := ConnectWebScoket(
-				serverInfo.toStr(), proxyHost,
+				reconnectUrl, proxyHost,
 				userAgent, &sessionParam, sessionInfo, nil)
 			return reconnectInfo
 		})
@@ -147,7 +160,8 @@ func StartReverseWebSocketClient(
 		defer listenGroup.Close()
 
 		ListenAndNewConnect(
-			true, listenGroup, localForwardList, reconnectInfo.Conn, &sessionParam, reconnect)
+			true, listenGroup, localForwardList,
+			reconnectInfo.Conn, &sessionParam, reconnect)
 	}
 	for {
 		process()

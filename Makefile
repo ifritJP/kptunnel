@@ -1,4 +1,5 @@
 all:
+	@echo make setup
 	@echo make build
 	@echo make build-win
 	@echo make kill-test
@@ -8,6 +9,9 @@ all:
 	@echo make test-r-echo
 	@echo make test-heavy
 
+
+setup:
+	go mod tidy
 
 build:
 	go build -o kptunnel$(SUFFIX) *.go

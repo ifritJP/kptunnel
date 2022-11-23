@@ -15,6 +15,8 @@ import (
 	"time"
 
 	_ "net/http/pprof"
+
+	"github.com/google/uuid"
 )
 
 const VERSION = "0.2.0"
@@ -43,7 +45,7 @@ func hostname2HostInfo(name string) *HostInfo {
 		fmt.Printf("%s\n", err2)
 		return nil
 	}
-	return &HostInfo{"", hostport[0], port, serverUrl.Path}
+	return &HostInfo{"", hostport[0], port, serverUrl.Path, serverUrl.RawQuery}
 }
 
 var verboseFlag = false
@@ -321,6 +323,7 @@ func ParseOptClient(mode string, args []string) {
 	userAgent := cmd.String("UA", "Go Http Client", "user agent for websocket")
 	proxyHost := cmd.String("proxy", "", "proxy server")
 	wsPath := cmd.String("wspath", "/", "websocket path")
+	session := cmd.String("session", "", "set the session ID")
 	header := cmd.String("header", "", "http header. ex, 'NAME: VAL'")
 	tlsFlag := cmd.Bool("tls", false, "connect on tls")
 
@@ -338,8 +341,16 @@ func ParseOptClient(mode string, args []string) {
 	if *tlsFlag {
 		schema = "wss://"
 	}
+	wsQuery := ""
+	if *session == "" {
+		uuidObj := uuid.New()
+		wsQuery = "session=" + uuidObj.String()
+	} else {
+		wsQuery = "session=" + *session
+	}
+
 	websocketServerInfo := HostInfo{
-		schema, param.serverInfo.Name, param.serverInfo.Port, *wsPath}
+		schema, param.serverInfo.Name, param.serverInfo.Port, *wsPath, wsQuery}
 
 	switch mode {
 	case "client":

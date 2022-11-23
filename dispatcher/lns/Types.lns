@@ -1,8 +1,6 @@
 pub enum ConnectMode {
-   Disconnect = "Disconnect",
    OneShot = "OneShot",
    CanReconnect = "CanReconnect",
-   Reconnect = "Reconnect",
 }
 
 

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -106,6 +107,7 @@ type TunnelInfo struct {
 	mode          string
 	commands      []string
 	reqTunnelInfo *lns.Types_ReqTunnelInfo
+	session       string
 	hostPort      string
 }
 
@@ -115,16 +117,53 @@ type WrapWSHandler struct {
 }
 
 var hostPort2TunnelInfo map[string]*TunnelInfo = map[string]*TunnelInfo{}
+var session2TunnelInfo map[string]*TunnelInfo = map[string]*TunnelInfo{}
 
-// hostPort2TunnelInfo への排他
-var hostPort2TunnelInfo_mutex sync.Mutex
+// hostPort2TunnelInfo, session2TunnelInfo への排他
+var tunnelInfo_mutex sync.Mutex
+
+func getTunnelInfoForSesion(url *url.URL) (*TunnelInfo, string) {
+
+	querys := url.Query()
+
+	modeList, exist := querys["mode"]
+	mode := ""
+	if exist && len(modeList) != 0 && modeList[0] != "" {
+		mode = modeList[0]
+	}
+
+	sessionList, exist := querys["session"]
+	session := ""
+	if exist && len(sessionList) != 0 && sessionList[0] != "" {
+		session = sessionList[0]
+		var tunnelInfo *TunnelInfo
+
+		tunnelInfo_mutex.Lock()
+		tunnelInfo, exist := session2TunnelInfo[session]
+		tunnelInfo_mutex.Unlock()
+
+		if exist {
+			log.Printf("found session -- %s", session)
+			tunnelInfo.connectMode = mode
+			return tunnelInfo, session
+		} else {
+			log.Printf("new session -- %s", session)
+		}
+	}
+	log.Printf("not found session")
+	return nil, session
+}
 
 func processRequest(env *LnsEnv, req *http.Request) (int, string, *TunnelInfo) {
 	statusCode, message := lns.Handle_canAccept(
 		env, req.URL.String(), Lns_mapFromGo(req.Header))
-
 	if statusCode != 200 {
 		return statusCode, message, nil
+	}
+
+	tunnelInfo, session := getTunnelInfoForSesion(req.URL)
+	if tunnelInfo != nil {
+		return 200, "", tunnelInfo
 	}
 
 	workReqTunnelInfo, errMess := lns.Handle_getTunnelInfo(
@@ -152,6 +191,7 @@ func processRequest(env *LnsEnv, req *http.Request) (int, string, *TunnelInfo) {
 		mode:          reqTunnelInfo.Get_mode(env),
 		commands:      commands,
 		reqTunnelInfo: reqTunnelInfo,
+		session:       session,
 		hostPort:      hostPort,
 	}
 	return statusCode, "", info
@@ -211,7 +251,7 @@ func execWebSocketServer(
 	wrapHandler := WrapWSHandler{handle, &param}
 
 	http.Handle("/", wrapHandler)
-	err := http.ListenAndServe(param.serverInfo.toStr(), nil)
+	err := http.ListenAndServe(param.serverInfo.getHostPort(), nil)
 	if err != nil {
 		panic("ListenAndServe: " + err.Error())
 	}
@@ -246,10 +286,11 @@ func transportConn(finChan chan bool, message string, src io.Reader, dst io.Writ
 func stopTunnel(info *TunnelInfo) {
 	log.Printf("stopTunnel -- %s", info)
 
-	hostPort2TunnelInfo_mutex.Lock()
+	tunnelInfo_mutex.Lock()
 	orgInfo, exist := hostPort2TunnelInfo[info.hostPort]
 	delete(hostPort2TunnelInfo, info.hostPort)
-	hostPort2TunnelInfo_mutex.Unlock()
+	delete(session2TunnelInfo, orgInfo.session)
+	tunnelInfo_mutex.Unlock()
 
 	if !exist {
 		log.Printf("not found -- %s", info.hostPort)
@@ -360,9 +401,10 @@ func startTunnelApp(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) bool {
 	info.cmd = cmd
 
 	// hostPort2TunnelInfo に info を登録
-	hostPort2TunnelInfo_mutex.Lock()
+	tunnelInfo_mutex.Lock()
 	hostPort2TunnelInfo[info.hostPort] = info
-	hostPort2TunnelInfo_mutex.Unlock()
+	session2TunnelInfo[info.session] = info
+	tunnelInfo_mutex.Unlock()
 
 	return true
 }
@@ -374,8 +416,8 @@ func processConnection(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) {
 		return
 	}
 
-	if info.cmd == nil {
-		if info.connectMode == "CanReconnect" || info.connectMode == "OneShot" {
+	if info.connectMode == "CanReconnect" || info.connectMode == "OneShot" {
+		if info.cmd == nil {
 			if !startTunnelApp(conn, param, info) {
 				return
 			}
@@ -385,12 +427,12 @@ func processConnection(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) {
 			}
 			// Tunnel アプリとの通信中継
 			processToTransfer(conn, info)
-		} else if info.connectMode == "Reconnect" {
-			// 再接続の場合は、転送だけ行なう
-			processToTransfer(conn, info)
-		} else if info.connectMode == "Disconnect" {
-			stopTunnel(info)
 		}
+	} else if info.connectMode == "Reconnect" {
+		// 再接続の場合は、転送だけ行なう
+		processToTransfer(conn, info)
+	} else if info.connectMode == "Disconnect" {
+		stopTunnel(info)
 	}
 }
 

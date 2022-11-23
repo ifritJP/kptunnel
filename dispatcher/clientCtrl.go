@@ -64,6 +64,9 @@ func ippattern2MaskIP(ipPattern string) (*MaskIP, error) {
 }
 
 func AcceptClient(req *http.Request, param *TunnelParam) error {
+	if req.URL.Path != param.serverInfo.Path {
+		return fmt.Errorf("unmatch path -- %s, %s", req.URL.Path, param.serverInfo.Path)
+	}
 
 	remoteAddr := req.RemoteAddr
 

@@ -33,6 +33,10 @@ func hostname2HostInfo(name string) *HostInfo {
 		fmt.Printf("%s\n", err)
 		return nil
 	}
+	if serverUrl.Path == "" {
+		serverUrl.Path = "/"
+	}
+
 	hostport := strings.Split(serverUrl.Host, ":")
 	if len(hostport) != 2 {
 		fmt.Printf("illegal pattern. set 'hoge.com:1234' -- %s\n", name)
@@ -134,7 +138,7 @@ func ParseOpt(
 			fmt.Fprintf(cmd.Output(), "[forward [forward [...]]] ")
 		}
 		fmt.Fprintf(cmd.Output(), "[option] \n\n")
-		fmt.Fprintf(cmd.Output(), "   server: e.g. localhost:1234 or :1234\n")
+		fmt.Fprintf(cmd.Output(), "   server: e.g. localhost:1234/path or :1234\n")
 		fmt.Fprintf(cmd.Output(), "   forward: listen-port,target-port  e.g. :1234,hoge.com:5678\n")
 		fmt.Fprintf(cmd.Output(), "\n")
 		fmt.Fprintf(cmd.Output(), " options:\n")
