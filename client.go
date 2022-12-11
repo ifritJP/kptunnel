@@ -1,3 +1,5 @@
+// +build !wasm
+
 // -*- coding: utf-8 -*-
 
 package main

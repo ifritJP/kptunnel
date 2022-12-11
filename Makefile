@@ -2,6 +2,7 @@ all:
 	@echo make setup
 	@echo make build
 	@echo make build-win
+	@echo make build-wasm
 	@echo make kill-test
 	@echo make test-iperf3 [TEST_ENC_COUNT=N]
 	@echo make test-r-iperf3 [TEST_ENC_COUNT=N]
@@ -14,10 +15,14 @@ setup:
 	go mod tidy
 
 build:
-	go build -o kptunnel$(SUFFIX) *.go
+	go build $(GOTAG) -o kptunnel$(SUFFIX)
 
 build-win:
 	GOARCH=386 GOOS=windows $(MAKE) build SUFFIX=.exe
+
+build-wasm:
+	GOARCH=wasm GOOS=js $(MAKE) build SUFFIX=.wasm GOTAG="-tags wasm"
+	mv kptunnel.wasm webfront
 
 profile:
 	curl --proxy '' -s http://localhost:9000/debug/pprof/profile > tmp/cpu.pprof

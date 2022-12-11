@@ -1,3 +1,5 @@
+// +build !wasm
+
 // -*- coding: utf-8 -*-
 package main
 
@@ -5,12 +7,11 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,39 +21,6 @@ import (
 )
 
 const VERSION = "0.2.0"
-
-// 2byte の MAX。
-// ここを 65535 より大きくする場合は、WriteItem, ReadItem の処理を変更する。
-const BUFSIZE = 65535
-
-func hostname2HostInfo(name string) *HostInfo {
-	if strings.Index(name, "://") == -1 {
-		name = fmt.Sprintf("http://%s", name)
-	}
-	serverUrl, err := url.Parse(name)
-	if err != nil {
-		fmt.Printf("%s\n", err)
-		return nil
-	}
-	hostport := strings.Split(serverUrl.Host, ":")
-	if len(hostport) != 2 {
-		fmt.Printf("illegal pattern. set 'hoge.com:1234' -- %s\n", name)
-		return nil
-	}
-	var port int
-	port, err2 := strconv.Atoi(hostport[1])
-	if err2 != nil {
-		fmt.Printf("%s\n", err2)
-		return nil
-	}
-	return &HostInfo{"", hostport[0], port, serverUrl.Path, serverUrl.RawQuery}
-}
-
-var verboseFlag = false
-
-func IsVerbose() bool {
-	return verboseFlag
-}
 
 func main() {
 
@@ -144,6 +112,7 @@ func ParseOpt(
 	prof := cmd.String("prof", "", "profile port. (:1234)")
 	console := cmd.String("console", "", "console port. (:1234)")
 	verbose := cmd.Bool("verbose", false, "verbose. (true or false)")
+	debug := cmd.Bool("debug", false, "debug. (true or false)")
 	omitForward := cmd.Bool("omit", false, "omit forward")
 
 	usage := func() {
@@ -206,6 +175,7 @@ func ParseOpt(
 	}
 
 	verboseFlag = *verbose
+	debugFlag = *debug
 
 	if *pass == "" {
 		fmt.Print("warning: password is default. set -pass option.\n")
@@ -305,6 +275,8 @@ func ParseOpt(
 func ParseOptServer(mode string, args []string) {
 	var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	param, forwardList, _ := ParseOpt(cmd, mode, args)
+
+	log.SetPrefix(fmt.Sprintf("%d: ", param.serverInfo.Port))
 
 	switch mode {
 	case "server":

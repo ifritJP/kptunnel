@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -20,6 +23,10 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 )
+
+// 2byte の MAX。
+// ここを 65535 より大きくする場合は、WriteItem, ReadItem の処理を変更する。
+const BUFSIZE = 65535
 
 // 接続先情報
 type HostInfo struct {
@@ -42,6 +49,29 @@ func (info *HostInfo) toStr() string {
 		work = fmt.Sprintf("%s?%s", work, info.Query)
 	}
 	return work
+}
+
+func hostname2HostInfo(name string) *HostInfo {
+	if strings.Index(name, "://") == -1 {
+		name = fmt.Sprintf("http://%s", name)
+	}
+	serverUrl, err := url.Parse(name)
+	if err != nil {
+		fmt.Printf("%s\n", err)
+		return nil
+	}
+	hostport := strings.Split(serverUrl.Host, ":")
+	if len(hostport) != 2 {
+		fmt.Printf("illegal pattern. set 'hoge.com:1234' -- %s\n", name)
+		return nil
+	}
+	var port int
+	port, err2 := strconv.Atoi(hostport[1])
+	if err2 != nil {
+		fmt.Printf("%s\n", err2)
+		return nil
+	}
+	return &HostInfo{"", hostport[0], port, serverUrl.Path, serverUrl.RawQuery}
 }
 
 // パスワードからキーを生成する
@@ -494,6 +524,7 @@ func ProcessServerAuth(
 	}
 	var resp AuthResponse
 	if err := json.NewDecoder(reader).Decode(&resp); err != nil {
+		log.Print("decode error -- AuthResponse")
 		return false, nil, err
 	}
 	if resp.Response != generateChallengeResponse(
@@ -669,6 +700,7 @@ func ProcessClientAuth(
 		return nil, true, err
 	}
 
+	log.Print("read Magic")
 	magicItem, err := readItemForNormal(stream, connInfo.CryptCtrlObj)
 	if err != nil {
 		return nil, true, err
@@ -676,11 +708,11 @@ func ProcessClientAuth(
 	if !bytes.Equal(magicItem.buf, []byte(param.magic)) {
 		return nil, true, fmt.Errorf("unmatch MAGIC %x", magicItem.buf)
 	}
+	log.Print("read challenge")
 
 	// challenge を読み込み、認証用パスワードから response を生成する
 	var reader io.Reader
 	reader, err = readItemWithReader(stream, connInfo.CryptCtrlObj)
-	log.Print("read challenge")
 	if err != nil {
 		return nil, true, err
 	}
@@ -741,32 +773,35 @@ func ProcessClientAuth(
 		}
 
 		log.Printf("received forwardList -- %v", result.ForwardList)
-		if forwardList != nil &&
-			result.ForwardList != nil && len(result.ForwardList) > 0 {
-			// クライアントが指定している ForwardList と、
-			// サーバ側が指定している ForwardList に違いがあるか調べて、
-			// 違う場合は警告を出力する。
-			orgMap := map[string]bool{}
-			for _, forwardInfo := range forwardList {
-				orgMap[forwardInfo.toStr()] = true
-			}
-			newMap := map[string]bool{}
-			for _, forwardInfo := range result.ForwardList {
-				newMap[forwardInfo.toStr()] = true
-			}
-			diff := false
-			if len(orgMap) != len(newMap) {
-				diff = true
-			} else {
-				for org, _ := range orgMap {
-					if _, has := newMap[org]; !has {
-						diff = true
-						break
+		if result.ForwardList != nil && len(result.ForwardList) > 0 {
+			if forwardList != nil {
+				// クライアントが指定している ForwardList と、
+				// サーバ側が指定している ForwardList に違いがあるか調べて、
+				// 違う場合は警告を出力する。
+				orgMap := map[string]bool{}
+				for _, forwardInfo := range forwardList {
+					orgMap[forwardInfo.toStr()] = true
+				}
+				newMap := map[string]bool{}
+				for _, forwardInfo := range result.ForwardList {
+					newMap[forwardInfo.toStr()] = true
+				}
+				diff := false
+				if len(orgMap) != len(newMap) {
+					diff = true
+				} else {
+					for org, _ := range orgMap {
+						if _, has := newMap[org]; !has {
+							diff = true
+							break
+						}
 					}
 				}
-			}
-			if diff {
-				log.Printf("******* override forward *******")
+				if diff {
+					log.Printf("******* override forward *******")
+					forwardList = result.ForwardList
+				}
+			} else {
 				forwardList = result.ForwardList
 			}
 		}

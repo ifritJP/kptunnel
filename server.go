@@ -242,6 +242,9 @@ func execWebSocketServer(
 
 	// WebSocket 接続時のハンドラ
 	handle := func(ws *websocket.Conn, remoteAddr string) {
+		// binary データを扱うので BinaryFrame をセット
+		ws.PayloadType = websocket.BinaryFrame
+
 		connInfo := CreateConnInfo(ws, param.encPass, param.encCount, nil, true)
 		if _, retForwardList, err := ProcessServerAuth(
 			connInfo, &param, remoteAddr, forwardList); err != nil {

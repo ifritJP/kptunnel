@@ -165,6 +165,8 @@ func ConnectWebScoket(
 			return nil, ReconnectInfo{nil, true, err}
 		}
 	}
+	// websocket の送信データを binary で扱う設定
+	websock.PayloadType = websocket.BinaryFrame
 	connInfo := CreateConnInfo(
 		websock, param.encPass, param.encCount, sessionInfo, false)
 	overrideForwardList := forwardList
