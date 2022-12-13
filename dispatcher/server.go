@@ -251,6 +251,10 @@ func stopTunnel(info *TunnelInfo) {
 		log.Printf("error run -- %s", err)
 		return
 	}
+
+	time.Sleep(1000 * time.Millisecond)
+	orgInfo.cmd.Process.Kill()
+
 	// Start() したプロセスは Wait() してやらないと、 defunct になってしまう。
 	orgInfo.cmd.Wait()
 	log.Printf("end to wait -- %s", info.hostPort)
@@ -364,6 +368,7 @@ func startClient(conn *ConnInfo, info *TunnelInfo) {
 		if _, err := io.Copy(conn.Conn, reader); err != nil {
 			log.Printf("error: ", err)
 		}
+		conn.Conn.Close()
 	}
 	go readClient()
 
