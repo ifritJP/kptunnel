@@ -22,82 +22,6 @@ import (
 	. "github.com/ifritJP/LuneScript/src/lune/base/runtime_go"
 )
 
-func StartEchoServer(serverInfo HostInfo) {
-	server := serverInfo.toStr()
-	log.Print("start echo --- ", server)
-	local, err := net.Listen("tcp", server)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer local.Close()
-	for {
-		conn, err := local.Accept()
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Print("connected")
-		go func(tunnel net.Conn) {
-			defer tunnel.Close()
-			io.Copy(tunnel, tunnel)
-			log.Print("closed")
-		}(conn)
-	}
-}
-
-func StartHeavyClient(serverInfo HostInfo) {
-	conn, err := net.Dial("tcp", serverInfo.toStr())
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer conn.Close()
-
-	dummy := make([]byte, 100)
-	for index := 0; index < len(dummy); index++ {
-		dummy[index] = byte(index)
-	}
-	log.Print("connected")
-
-	prev := time.Now()
-	writeCount := uint64(0)
-	readCount := uint64(0)
-
-	write := func() {
-		for {
-			if size, err := conn.Write(dummy); err != nil {
-				log.Fatal(err)
-			} else {
-				writeCount += uint64(size)
-			}
-		}
-	}
-	read := func() {
-		for {
-			if size, err := io.ReadFull(conn, dummy); err != nil {
-				log.Fatal(err)
-			} else {
-				readCount += uint64(size)
-			}
-			for index := 0; index < len(dummy); index++ {
-				if dummy[index] != byte(index) {
-					log.Fatalf(
-						"unmatch -- %d %d %X %X",
-						readCount, index, dummy[index], byte(index))
-				}
-			}
-		}
-	}
-	go write()
-	go read()
-
-	for {
-		span := time.Now().Sub(prev)
-		if span > time.Millisecond*1000 {
-			prev = time.Now()
-			log.Printf("hoge -- %d, %d", writeCount, readCount)
-		}
-	}
-}
-
 type TunnelInfo struct {
 	env           *LnsEnv
 	cmd           *exec.Cmd
@@ -256,7 +180,7 @@ func execWebSocketServer(
 
 	wrapHandler := WrapWSHandler{handle, &param}
 
-	http.Handle("/", wrapHandler)
+	http.Handle(param.serverInfo.Path, wrapHandler)
 	err := http.ListenAndServe(param.serverInfo.getHostPort(), nil)
 	if err != nil {
 		panic("ListenAndServe: " + err.Error())
@@ -355,9 +279,7 @@ func processToTransfer(conn *ConnInfo, info *TunnelInfo) {
 	dstConn.Close()
 }
 
-func startTunnelApp(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) bool {
-	log.Printf("run %s", info)
-
+func startCommand(info *TunnelInfo) (*exec.Cmd, io.ReadCloser, error) {
 	cmd := exec.Command(info.commands[0], info.commands[1:]...)
 	for key, val := range info.envMap {
 		envVal := fmt.Sprintf("%s=%s", key, val)
@@ -367,11 +289,21 @@ func startTunnelApp(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) bool {
 	reader, err := cmd.StderrPipe()
 	if err != nil {
 		log.Printf("failed to get the stdout from the tunnel.%s", err)
-		return false
+		return nil, nil, err
 	}
 
 	if err := cmd.Start(); err != nil {
 		log.Printf("error run -- %s", err)
+		return nil, nil, err
+	}
+	return cmd, reader, nil
+}
+
+func startTunnelApp(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) bool {
+	log.Printf("run %s", info)
+
+	cmd, reader, err := startCommand(info)
+	if err != nil {
 		return false
 	}
 
@@ -420,6 +352,32 @@ func startTunnelApp(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) bool {
 	return true
 }
 
+func startClient(conn *ConnInfo, info *TunnelInfo) {
+	log.Printf("run %s", info)
+
+	cmd, reader, err := startCommand(info)
+	if err != nil {
+		return
+	}
+
+	readClient := func() {
+		if _, err := io.Copy(conn.Conn, reader); err != nil {
+			log.Printf("error: ", err)
+		}
+	}
+	go readClient()
+
+	buf := make([]byte, 1000)
+	for {
+		if _, err := conn.Conn.Read(buf); err != nil {
+			break
+		}
+	}
+	cmd.Process.Kill()
+
+	cmd.Wait()
+}
+
 func processConnection(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) {
 
 	if len(info.commands) == 0 {
@@ -444,6 +402,8 @@ func processConnection(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) {
 		processToTransfer(conn, info)
 	} else if info.connectMode == "Disconnect" {
 		stopTunnel(info)
+	} else if info.connectMode == "Client" {
+		startClient(conn, info)
 	}
 }
 

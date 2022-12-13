@@ -86,13 +86,21 @@ class DefaultHandler extend (Types.HandleIF ) {
          }
       }
 
-      let connectMode = Types.ConnectMode.CanReconnect;
+      // let connectMode = Types.ConnectMode.CanReconnect;
 
-      let mode = "server";
+      // let mode = "server";
+      // return new Types.ReqTunnelInfo(
+      //    "localhost", self.port, connectMode, mode,
+      //    [ "../kptunnel", mode, ":%d" (self.port),
+      //      ":%d,192.168.0.101:22" (10000 + self.port) ],
+      //    { "GOGC":"50" } ), "";
+
+      let connectMode = Types.ConnectMode.Client;
+
+      let mode = "wsclient";
       return new Types.ReqTunnelInfo(
          "localhost", self.port, connectMode, mode,
-         [ "../kptunnel", mode, ":%d" (self.port),
-           ":%d,192.168.0.101:22" (10000 + self.port) ],
+         [ "../kptunnel", mode, ":10000", "-omit" ],
          { "GOGC":"50" } ), "";
    }
    pub fn onEndTunnel( tunnelInfo:&Types.ReqTunnelInfo ) __noasync mut {

@@ -6,16 +6,19 @@ var Types__mod__ string
 // decl enum -- ConnectMode 
 type Types_ConnectMode = string
 const Types_ConnectMode__CanReconnect = "CanReconnect"
+const Types_ConnectMode__Client = "Client"
 const Types_ConnectMode__OneShot = "OneShot"
 var Types_ConnectModeList_ = NewLnsList( []LnsAny {
   Types_ConnectMode__OneShot,
   Types_ConnectMode__CanReconnect,
+  Types_ConnectMode__Client,
 })
 func Types_ConnectMode_get__allList(_env *LnsEnv) *LnsList{
     return Types_ConnectModeList_
 }
 var Types_ConnectModeMap_ = map[string]string {
   Types_ConnectMode__CanReconnect: "ConnectMode.CanReconnect",
+  Types_ConnectMode__Client: "ConnectMode.Client",
   Types_ConnectMode__OneShot: "ConnectMode.OneShot",
 }
 func Types_ConnectMode__from(_env *LnsEnv, arg1 string) LnsAny{

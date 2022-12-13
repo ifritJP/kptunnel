@@ -82,8 +82,6 @@ func main() {
 		fmt.Fprintf(cmd.Output(), " mode: \n")
 		fmt.Fprintf(cmd.Output(), "    wsserver\n")
 		fmt.Fprintf(cmd.Output(), "    wsclient\n")
-		fmt.Fprintf(cmd.Output(), "    echo\n")
-		fmt.Fprintf(cmd.Output(), "    heavy\n")
 		os.Exit(1)
 	}
 	cmd.Parse(os.Args[1:])
@@ -103,10 +101,6 @@ func main() {
 			ParseOptServer(mode, cmd.Args()[1:])
 		case "wsclient":
 			ParseOptClient(mode, cmd.Args()[1:])
-		case "echo":
-			ParseOptEcho(mode, cmd.Args()[1:])
-		case "heavy":
-			ParseOptHeavy(mode, cmd.Args()[1:])
 		case "test":
 			test()
 		}
@@ -237,20 +231,6 @@ func ParseOptClient(mode string, args []string) {
 		schema, param.serverInfo.Name, param.serverInfo.Port, *wsPath}
 
 	ConnectWebScoket(websocketServerInfo.toStr(), *proxyHost, *userAgent, param)
-}
-
-func ParseOptEcho(mode string, args []string) {
-	var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	param := ParseOpt(cmd, mode, args)
-
-	StartEchoServer(param.serverInfo)
-}
-
-func ParseOptHeavy(mode string, args []string) {
-	var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	param := ParseOpt(cmd, mode, args)
-
-	StartHeavyClient(param.serverInfo)
 }
 
 func setsignal() {

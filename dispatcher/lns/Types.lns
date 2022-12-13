@@ -9,6 +9,10 @@ pub enum ConnectMode {
 明示的に Disconnect されない限り、 kptunnel server プロセスは残り続ける。
    */
    CanReconnect = "CanReconnect",
+   /**
+   クライアントを動かす。
+   */
+   Client = "Client",
 }
 
 

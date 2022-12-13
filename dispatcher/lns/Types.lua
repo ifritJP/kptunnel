@@ -118,6 +118,9 @@ ConnectMode.__allList[1] = ConnectMode.OneShot
 ConnectMode.CanReconnect = 'CanReconnect'
 ConnectMode._val2NameMap['CanReconnect'] = 'CanReconnect'
 ConnectMode.__allList[2] = ConnectMode.CanReconnect
+ConnectMode.Client = 'Client'
+ConnectMode._val2NameMap['Client'] = 'Client'
+ConnectMode.__allList[3] = ConnectMode.Client
 
 
 local ReqTunnelInfo = {}
