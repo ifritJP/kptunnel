@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -79,11 +80,25 @@ func getTunnelInfoForSesion(url *url.URL) (*TunnelInfo, string) {
 	return nil, session
 }
 
-func processRequest(env *LnsEnv, req *http.Request) (int, string, *TunnelInfo) {
+func processRequest(
+	param *TunnelParam, env *LnsEnv, req *http.Request) (int, string, *TunnelInfo) {
 	statusCode, message := lns.Handle_canAccept(
 		env, req.URL.String(), Lns_mapFromGo(req.Header))
 	if statusCode != 200 {
 		return statusCode, message, nil
+	}
+
+	queries := req.URL.Query()
+	if _, exist := queries["reqinfo"]; exist {
+		if param.availableReqInfo {
+			type ReqInfoResp struct {
+				Count int
+			}
+			bytes, _ := json.Marshal(&ReqInfoResp{Count: len(hostPort2TunnelInfo)})
+			return 200, string(bytes), nil
+		} else {
+			return 400, "deny reqInfo", nil
+		}
 	}
 
 	tunnelInfo, session := getTunnelInfoForSesion(req.URL)
@@ -147,12 +162,17 @@ func (handler WrapWSHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	defer Lns_releaseEnv(env)
 	// env := Lns_GetEnv()
 
-	statusCode, message, info := processRequest(env, req)
+	statusCode, message, info := processRequest(handler.param, env, req)
 	if statusCode != 200 {
 		w.WriteHeader(statusCode)
 		w.Write([]byte(message))
 		log.Printf("request error -- %d: %s\n", statusCode, message)
 		time.Sleep(3 * time.Second)
+		return
+	}
+	if info == nil {
+		w.WriteHeader(statusCode)
+		w.Write([]byte(message))
 		return
 	}
 
@@ -379,8 +399,16 @@ func startClient(conn *ConnInfo, info *TunnelInfo) {
 		}
 	}
 	cmd.Process.Kill()
-
 	cmd.Wait()
+
+	// stop を送信する
+	args := append([]string{}, info.commands...)
+	args = append(args, "-ctrl", "stop")
+	killCmd := exec.Command(info.commands[0], args...)
+	if err := killCmd.Run(); err != nil {
+		log.Printf("error run -- %s", err)
+		return
+	}
 }
 
 func processConnection(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) {

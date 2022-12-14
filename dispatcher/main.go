@@ -123,6 +123,7 @@ func ParseOpt(
 	ipPattern := cmd.String("ip", "", "allow ip range (192.168.0.1/24)")
 	console := cmd.String("console", "", "console port. (:1234)")
 	verbose := cmd.Bool("verbose", false, "verbose. (true or false)")
+	enableReqInfo := cmd.Bool("reqInfo", false, "enable reqInfo (true or false)")
 
 	usage := func() {
 		fmt.Fprintf(cmd.Output(), "\nUsage: %s %s <server> ", os.Args[0], mode)
@@ -191,7 +192,7 @@ func ParseOpt(
 
 	verboseFlag = *verbose
 
-	param := TunnelParam{mode, maskIP, *serverInfo}
+	param := TunnelParam{mode, maskIP, *serverInfo, *enableReqInfo}
 
 	if *console != "" {
 		go func() {

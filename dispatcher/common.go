@@ -65,6 +65,8 @@ type TunnelParam struct {
 	maskedIP *MaskIP
 	// サーバ情報
 	serverInfo HostInfo
+	// 問い合わせに回答するかどうか
+	availableReqInfo bool
 }
 
 type RingBuf struct {

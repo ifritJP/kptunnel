@@ -125,13 +125,9 @@ func StartHeavyClient(serverInfo HostInfo) {
 	}
 }
 
-func listenTcpServer(
-	local net.Listener, param *TunnelParam, forwardList []ForwardInfo,
+func processTcpServer(
+	conn net.Conn, param *TunnelParam, forwardList []ForwardInfo,
 	process func(*ConnInfo, *ListenGroup, []ForwardInfo)) {
-	conn, err := local.Accept()
-	if err != nil {
-		log.Fatal(err)
-	}
 	defer conn.Close()
 
 	remoteAddr := fmt.Sprintf("%s", conn.RemoteAddr())
@@ -149,6 +145,7 @@ func listenTcpServer(
 	//newSession := false
 	remoteAddrTxt := fmt.Sprintf("%s", conn.RemoteAddr())
 	var retForwardList []ForwardInfo
+	var err error
 	if _, retForwardList, err = ProcessServerAuth(
 		connInfo, &tunnelParam, remoteAddrTxt, forwardList); err != nil {
 		connInfo.SessionInfo.SetState(Session_state_authmiss)
@@ -162,6 +159,17 @@ func listenTcpServer(
 		//log.Print("process")
 		process(connInfo, listenGroup, localForwardList)
 	}
+}
+
+func listenTcpServer(
+	local net.Listener, param *TunnelParam, forwardList []ForwardInfo,
+	process func(*ConnInfo, *ListenGroup, []ForwardInfo)) {
+	conn, err := local.Accept()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	go processTcpServer(conn, param, forwardList, process)
 }
 
 func StartServer(param *TunnelParam, forwardList []ForwardInfo) {
