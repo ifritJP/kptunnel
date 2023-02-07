@@ -43,6 +43,36 @@ importScripts("wasm_exec.js");
         let res = await WebAssembly.instantiateStreaming(
             fetch( "kptunnel.wasm" ), go.importObject);
 
+        async function runGo() {
+            // execute the go main method
+            go.argv = [ "_ifObj" ];
+            go.run(res.instance ).then( ()=> {
+                Log( "detect exit" );
+            });
+
+            ifObj = _ifObj( isMaster );
+            
+            ifObj.startClient(
+                function( connId, b64 ) {
+                    Log( "send tunnel" );
+                    let bin = decB64( b64 );
+                    socket.send( bin );
+                    // 通信可能な場合 true を返す
+                    return socket.readyState == 1;
+                },
+                function( connId, kind ) {
+                    Log( "send ctrl -- ", connId, kind );
+                    citiObj.postMessage( { "kind": kind, "connId": connId } );
+                },
+                function( connId, b64 ) {
+                    Log( "send citi -- ", connId, b64.length );
+                    let mess = { kind: "pack", connId: connId, "b64": b64 };
+                    citiObj.postMessage( mess );
+                    // 通信可能な場合 true を返す
+                    return socket.readyState == 1;
+                }
+            );
+        }
 
         let worker = null;
         let citiObj = null;
@@ -106,34 +136,7 @@ importScripts("wasm_exec.js");
         socket.addEventListener(
             'open',
             async function( event ) {
-                // execute the go main method
-                go.argv = [ "_ifObj" ];
-                go.run(res.instance ).then( ()=> {
-                    Log( "detect exit" );
-                });
-
-                ifObj = _ifObj( isMaster );
-                
-                ifObj.startClient(
-                    function( connId, b64 ) {
-                        Log( "send tunnel" );
-                        let bin = decB64( b64 );
-                        socket.send( bin );
-                        // 通信可能な場合 true を返す
-                        return socket.readyState == 1;
-                    },
-                    function( connId, kind ) {
-                        Log( "send ctrl -- ", connId, kind );
-                        citiObj.postMessage( { "kind": kind, "connId": connId } );
-                    },
-                    function( connId, b64 ) {
-                        Log( "send citi -- ", connId, b64.length );
-                        let mess = { kind: "pack", connId: connId, "b64": b64 };
-                        citiObj.postMessage( mess );
-                        // 通信可能な場合 true を返す
-                        return socket.readyState == 1;
-                    }
-                );
+                runGo();
             } );
 
     }

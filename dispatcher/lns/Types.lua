@@ -2,8 +2,8 @@
 local _moduleObj = {}
 local __mod__ = '@lns.@Types'
 local _lune = {}
-if _lune7 then
-   _lune = _lune7
+if _lune8 then
+   _lune = _lune8
 end
 function _lune._toStem( val )
    return val
@@ -87,8 +87,8 @@ function _lune._fromMap( obj, map, memInfoList )
    return true
 end
 
-if not _lune7 then
-   _lune7 = _lune
+if not _lune8 then
+   _lune8 = _lune
 end
 local ConnectMode = {}
 _moduleObj.ConnectMode = ConnectMode

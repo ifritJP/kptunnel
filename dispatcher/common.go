@@ -67,6 +67,8 @@ type TunnelParam struct {
 	serverInfo HostInfo
 	// 問い合わせに回答するかどうか
 	availableReqInfo bool
+	// 最大セッション数
+	maxSessionNum int
 }
 
 type RingBuf struct {

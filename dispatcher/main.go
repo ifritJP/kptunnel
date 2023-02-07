@@ -124,6 +124,7 @@ func ParseOpt(
 	console := cmd.String("console", "", "console port. (:1234)")
 	verbose := cmd.Bool("verbose", false, "verbose. (true or false)")
 	enableReqInfo := cmd.Bool("reqInfo", false, "enable reqInfo (true or false)")
+	maxSessionNum := cmd.Int("maxSession", 10, "max session number. (it must be over 0)")
 
 	usage := func() {
 		fmt.Fprintf(cmd.Output(), "\nUsage: %s %s <server> ", os.Args[0], mode)
@@ -190,9 +191,14 @@ func ParseOpt(
 		}
 	}
 
+	if *maxSessionNum <= 0 {
+		fmt.Println("maxSession must be over 0")
+		usage()
+	}
+
 	verboseFlag = *verbose
 
-	param := TunnelParam{mode, maskIP, *serverInfo, *enableReqInfo}
+	param := TunnelParam{mode, maskIP, *serverInfo, *enableReqInfo, *maxSessionNum}
 
 	if *console != "" {
 		go func() {

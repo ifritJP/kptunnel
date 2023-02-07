@@ -38,8 +38,9 @@ type TunnelInfo struct {
 }
 
 type WrapWSHandler struct {
-	handle func(ws *websocket.Conn, info *TunnelInfo)
-	param  *TunnelParam
+	handle      func(ws *websocket.Conn, info *TunnelInfo)
+	param       *TunnelParam
+	sessionChan chan int
 }
 
 var hostPort2TunnelInfo map[string]*TunnelInfo = map[string]*TunnelInfo{}
@@ -162,7 +163,10 @@ func (handler WrapWSHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	defer Lns_releaseEnv(env)
 	// env := Lns_GetEnv()
 
+	<-handler.sessionChan
 	statusCode, message, info := processRequest(handler.param, env, req)
+	handler.sessionChan <- 0
+
 	if statusCode != 200 {
 		w.WriteHeader(statusCode)
 		w.Write([]byte(message))
@@ -198,7 +202,11 @@ func execWebSocketServer(
 		connectSession(connInfo, &param, info)
 	}
 
-	wrapHandler := WrapWSHandler{handle, &param}
+	sessionChan := make(chan int, param.maxSessionNum)
+	for loop := 0; loop < param.maxSessionNum; loop++ {
+		sessionChan <- 0
+	}
+	wrapHandler := WrapWSHandler{handle, &param, sessionChan}
 
 	http.Handle(param.serverInfo.Path, wrapHandler)
 	err := http.ListenAndServe(param.serverInfo.getHostPort(), nil)
