@@ -17,6 +17,7 @@ pub enum ConnectMode {
 
 
 pub class ReqTunnelInfo extend (Mapping) {
+   let id:str {pub};
    /** kptunnel を動かすサーバ。通常は localhost */
    let host:str {pub};
    /** kptunnel server を動かすポート。 */

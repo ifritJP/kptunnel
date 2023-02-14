@@ -25,4 +25,4 @@ build:
 
 
 exe-server:
-	./dispatcher wsserver $(SERVER) -u lns/user/UserHandler.lns,lns/user/canAccess.lns
+	./dispatcher wsserver $(SERVER) -u lns/user/sample/UserHandler.lns,lns/user/sample/canAccess.lns

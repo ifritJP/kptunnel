@@ -1,8 +1,10 @@
 import lns.Types;
+import lns.user.sample.common;
 
 pub class AsyncHandle extend (Types.AsyncHandleIF) {
    pub fn canAccept( uri:str, headerMap:&Map<str,&List<str>> ) __async mut : int, str {
       print( __func__, "url", uri );
+      
       foreach valList, key in headerMap {
          foreach val in valList {
             print( __func__, "header", "%s: %s" ( key, val ) );
@@ -12,8 +14,9 @@ pub class AsyncHandle extend (Types.AsyncHandleIF) {
    }
 }
 
+print( __mod__ );
 pub fn createHandler() : AsyncHandle {
+   common.func();
    let mut handler = new AsyncHandle();
-   print( __func__, handler );
    return handler;
 }

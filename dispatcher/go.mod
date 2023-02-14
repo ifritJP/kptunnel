@@ -3,7 +3,7 @@ module github.com/ifritJP/kptunnel/dispatcher
 go 1.14
 
 require (
-	github.com/ifritJP/LuneScript/src v0.0.0-20221208224344-dd8fb3b1c30e
+	github.com/ifritJP/LuneScript/src v0.0.0-20230214134158-5bf4c1000a71
 	golang.org/x/net v0.0.0-20221002022538-bcab6841153b
 )
 

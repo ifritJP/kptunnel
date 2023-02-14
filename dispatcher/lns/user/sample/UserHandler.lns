@@ -1,9 +1,13 @@
 import lns.Types;
+import lns.user.sample.common;
+
 
 pub class UserHandler extend (Types.HandleIF) {
+   let mut id:int;
    let mut port:int;
    local fn __init() {
       self.port = 10000;
+      self.id = 0;
    }
 
    pub fn getTunnelInfo(
@@ -11,6 +15,7 @@ pub class UserHandler extend (Types.HandleIF) {
    {
       print( __func__ );
       self.port = self.port + 1;
+      self.id = self.id + 1;
 
       // return new ReqTunnelInfo( 400, "hoge error", "", 0, "", [] );
       
@@ -23,16 +28,20 @@ pub class UserHandler extend (Types.HandleIF) {
 
       let mode = "server";
       return new Types.ReqTunnelInfo(
+         "%d" (self.id),
          "localhost", self.port, .OneShot, mode,
          [ "../kptunnel", mode, ":%d" (self.port),
            ":%d,192.168.0.101:22" (10000 + self.port) ], {} ), "";
    }
    pub fn onEndTunnel( tunnelInfo:&Types.ReqTunnelInfo ) mut {
-      print( __func__, tunnelInfo.$host, tunnelInfo.$port );
+      print( __func__, tunnelInfo.$id, tunnelInfo.$host, tunnelInfo.$port );
    }
 }
 
 pub fn createHandler() : UserHandler {
+   common.func();
+   common.func();
+
    let mut handler = new UserHandler();
    return handler;
 }

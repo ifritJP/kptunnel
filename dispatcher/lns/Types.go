@@ -36,11 +36,13 @@ type Types_ReqTunnelInfoMtd interface {
     Get_connectMode(_env *LnsEnv) string
     Get_envMap(_env *LnsEnv) *LnsMap
     Get_host(_env *LnsEnv) string
+    Get_id(_env *LnsEnv) string
     Get_mode(_env *LnsEnv) string
     Get_port(_env *LnsEnv) LnsInt
     Get_tunnelArgList(_env *LnsEnv) *LnsList
 }
 type Types_ReqTunnelInfo struct {
+    id string
     host string
     port LnsInt
     connectMode string
@@ -69,20 +71,22 @@ func Types_ReqTunnelInfoDownCastF( multi ...LnsAny ) LnsAny {
 func (obj *Types_ReqTunnelInfo) ToTypes_ReqTunnelInfo() *Types_ReqTunnelInfo {
     return obj
 }
-func NewTypes_ReqTunnelInfo(_env *LnsEnv, arg1 string, arg2 LnsInt, arg3 string, arg4 string, arg5 *LnsList, arg6 *LnsMap) *Types_ReqTunnelInfo {
+func NewTypes_ReqTunnelInfo(_env *LnsEnv, arg1 string, arg2 string, arg3 LnsInt, arg4 string, arg5 string, arg6 *LnsList, arg7 *LnsMap) *Types_ReqTunnelInfo {
     obj := &Types_ReqTunnelInfo{}
     obj.FP = obj
-    obj.InitTypes_ReqTunnelInfo(_env, arg1, arg2, arg3, arg4, arg5, arg6)
+    obj.InitTypes_ReqTunnelInfo(_env, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
     return obj
 }
-func (self *Types_ReqTunnelInfo) InitTypes_ReqTunnelInfo(_env *LnsEnv, arg1 string, arg2 LnsInt, arg3 string, arg4 string, arg5 *LnsList, arg6 *LnsMap) {
-    self.host = arg1
-    self.port = arg2
-    self.connectMode = arg3
-    self.mode = arg4
-    self.tunnelArgList = arg5
-    self.envMap = arg6
+func (self *Types_ReqTunnelInfo) InitTypes_ReqTunnelInfo(_env *LnsEnv, arg1 string, arg2 string, arg3 LnsInt, arg4 string, arg5 string, arg6 *LnsList, arg7 *LnsMap) {
+    self.id = arg1
+    self.host = arg2
+    self.port = arg3
+    self.connectMode = arg4
+    self.mode = arg5
+    self.tunnelArgList = arg6
+    self.envMap = arg7
 }
+func (self *Types_ReqTunnelInfo) Get_id(_env *LnsEnv) string{ return self.id }
 func (self *Types_ReqTunnelInfo) Get_host(_env *LnsEnv) string{ return self.host }
 func (self *Types_ReqTunnelInfo) Get_port(_env *LnsEnv) LnsInt{ return self.port }
 func (self *Types_ReqTunnelInfo) Get_connectMode(_env *LnsEnv) string{ return self.connectMode }
@@ -90,6 +94,7 @@ func (self *Types_ReqTunnelInfo) Get_mode(_env *LnsEnv) string{ return self.mode
 func (self *Types_ReqTunnelInfo) Get_tunnelArgList(_env *LnsEnv) *LnsList{ return self.tunnelArgList }
 func (self *Types_ReqTunnelInfo) Get_envMap(_env *LnsEnv) *LnsMap{ return self.envMap }
 func (self *Types_ReqTunnelInfo) ToMapSetup( obj *LnsMap ) *LnsMap {
+    obj.Items["id"] = Lns_ToCollection( self.id )
     obj.Items["host"] = Lns_ToCollection( self.host )
     obj.Items["port"] = Lns_ToCollection( self.port )
     obj.Items["connectMode"] = Lns_ToCollection( self.connectMode )
@@ -123,6 +128,11 @@ func Types_ReqTunnelInfo_FromMapSub( obj LnsAny, nilable bool, paramList []Lns_T
     return Types_ReqTunnelInfo_FromMapMain( newObj, objMap, paramList )
 }
 func Types_ReqTunnelInfo_FromMapMain( newObj *Types_ReqTunnelInfo, objMap *LnsMap, paramList []Lns_ToObjParam ) (bool, LnsAny, LnsAny) {
+    if ok,conv,mess := Lns_ToStrSub( objMap.Items["id"], false, nil); !ok {
+       return false,nil,"id:" + mess.(string)
+    } else {
+       newObj.id = conv.(string)
+    }
     if ok,conv,mess := Lns_ToStrSub( objMap.Items["host"], false, nil); !ok {
        return false,nil,"host:" + mess.(string)
     } else {

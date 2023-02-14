@@ -5,6 +5,9 @@ import lns.Types;
 import go/github:com.ifritJP.LuneScript.src.lune.base.front as LnsFront;
 import go/github:com.ifritJP.LuneScript.src.lune.base.Option as LnsOpt;
 import go/github:com.ifritJP.LuneScript.src.lune.base.Util as LnsUtil;
+import go/github:com.ifritJP.LuneScript.src.lune.base.Log as lnsLog;
+
+//lnsLog.setLevel( .Info );
 
 class UserAsyncHandlerWrapper extend (Types.AsyncHandleIF) {
    let obj:Luaval<stem>;
@@ -57,7 +60,7 @@ class UserHandlerWrapper extend (Types.HandleIF) {
          }
          error( "failed to fromStem -- %s" ( mess) );
       }
-      error( "failed to expandLuavalMap" );
+      return nil, "failed to getTunnelInfo";
    }
    pub fn onEndTunnel( tunnelInfo:&Types.ReqTunnelInfo ) __noasync mut {
       __luago {
@@ -69,15 +72,17 @@ class UserHandlerWrapper extend (Types.HandleIF) {
 }
 
 class DefaultHandler extend (Types.HandleIF ) {
-   let mut port:int;
+   let mut id:int;
    local fn __init() {
-      self.port = 10000;
+      self.id = 10000;
    }
 
    pub fn getTunnelInfo(
       uri:str, headerMap:&Map<str,&List<str>> ) __noasync mut : &Types.ReqTunnelInfo!, str
    {
       // return new ReqTunnelInfo( 400, "hoge error", "", 0, "", [] );
+
+      self.id = self.id + 1;
       
       print( __func__, "url", uri );
       foreach valList, key in headerMap {
@@ -90,16 +95,17 @@ class DefaultHandler extend (Types.HandleIF ) {
 
       // let mode = "server";
       // return new Types.ReqTunnelInfo(
-      //    "localhost", self.port, connectMode, mode,
-      //    [ "../kptunnel", mode, ":%d" (self.port),
-      //      ":%d,192.168.0.101:22" (10000 + self.port) ],
+      //    "localhost", self.id, connectMode, mode,
+      //    [ "../kptunnel", mode, ":%d" (self.id),
+      //      ":%d,192.168.0.101:22" (10000 + self.id) ],
       //    { "GOGC":"50" } ), "";
 
       let connectMode = Types.ConnectMode.Client;
 
       let mode = "wsclient";
       return new Types.ReqTunnelInfo(
-         "localhost", self.port, connectMode, mode,
+         "%d" (self.id),
+         "localhost", self.id, connectMode, mode,
          [ "../kptunnel", mode, ":10000", "-omit" ],
          { "GOGC":"50" } ), "";
    }
@@ -109,49 +115,74 @@ class DefaultHandler extend (Types.HandleIF ) {
 }
 
 let mut handler:Types.HandleIF = new DefaultHandler();
-let mut canAcceptLuaCode = "";
 
-fn convScript( path:str ) : str! {
-   let! mut fileObj = io.open( path## ) {
-      print( "failed to open -- %s" ( path ) );
-      return nil;
-   };
-   let! lnsCode = fileObj.read( "*a" ) {
-      print( "failed to read -- %s" ( path ) );
-      return nil;
-   };
-   
-   let luaCode;
-   __asyncLock {
-      let option = LnsOpt.analyze( [ path, "lua" ] );
-      luaCode = LnsFront.convertLnsCode2LuaCodeWithOpt( option, lnsCode, path## );
+class Runtime {
+   let path:str;
+   let front:LnsFront.Front;
+   let luaCode:str;
+   pub fn __init( front:LnsFront.Front, path:str, luaCode:str ) {
+      self.path = path;
+      self.front = front;
+      self.luaCode = luaCode;
    }
-   return luaCode;
-}
 
-fn loadScript( luaCode:str, path:str, funcName:str ) : Luaval<form>! {
-   let mut func:Luaval<form>! = nil;
-   __luaDepend{
-      let loaded, mess = _load( luaCode## );
-      when! loaded {
-         if! let mut mod = loaded(##) {
-            if! let work = mod[ funcName ] {
-               func = work@@form;
+   local static fn createDummy() __noasync : Runtime {
+      let path = "dummy";
+      let option = LnsOpt.analyze( [ path, "exe" ] );
+      return new Runtime( new LnsFront.Front( option ## ), path, "" );
+   }
+
+   local static fn convScript( path:str ) mut : Runtime! {
+      let! mut fileObj = io.open( path## ) {
+         print( "failed to open -- %s" ( path ) );
+         return nil;
+      };
+      let! lnsCode = fileObj.read( "*a" ) {
+         print( "failed to read -- %s" ( path ) );
+         return nil;
+      };
+      
+      let luaCode;
+      let mut front;
+      let option;
+      __asyncLock {
+         option = LnsOpt.analyze( [ path, "exe" ] );
+         front = new LnsFront.Front( option ## );
+      }
+      luaCode = front.convertLnsCode2LuaCodeWithOpt( option, lnsCode, path## );
+      return new Runtime( front, path, luaCode );
+   }
+
+   local fn loadScript( funcName:str ) : Luaval<form>! {
+      // import しているファイルがロードできるように設定する
+      self.front.setupPreloadWithImportedModules( true );
+
+      let mut func:Luaval<form>! = nil;
+      __luaDepend {
+         let loaded, mess = _load( self.luaCode## );
+         when! loaded {
+            if! let mut mod = loaded(##) {
+               if! let work = mod[ funcName ] {
+                  func = work@@form;
+               } else {
+                  print( "not found func -- ", funcName );
+               }
             } else {
-               print( "not found func -- ", funcName );
+               print( "failed to exec the load module -- ", self.path );
             }
          } else {
-            print( "failed to exec the load module -- ", path );
+            print( "failed to load -- ", self.path, mess );
          }
-      } else {
-         print( "failed to load -- ", path, mess );
       }
+      return func;
    }
-   return func;
 }
 
-pub fn setupHandle( path:str ) : bool {
+let mut canAcceptRuntime:&Runtime = Runtime.createDummy();
 
+
+
+pub fn setupHandle( path:str ) : bool {
    let list = LnsUtil.splitStr( path, "[^,]+");
    if #list ~= 2 {
       print( "illegal param -- %s" (path) );
@@ -159,36 +190,37 @@ pub fn setupHandle( path:str ) : bool {
    }
    let handlePath = list[ 1 ];
    let canAccessPath = list[ 2 ];
-   
-   if! convScript( canAccessPath ) {
-      canAcceptLuaCode = _exp;
-      let check;
-      __luaDepend {
-         check = loadScript( canAcceptLuaCode, "asyncHandle", "createHandler" );
-      }
-      if not check {
+
+   if! let runtime = Runtime.convScript( canAccessPath ) {
+      if! let func = runtime.loadScript( "createHandler" ) {
+         __luaDepend {
+            func(##);
+         }
+      } else {
          return false;
+      }
+      __asyncLock {
+         canAcceptRuntime = runtime;
       }
    } else {
       return false;
    }
 
-   let! luaCode = convScript( handlePath ) {
-      return false;
-   };
-
    let mut result = false;
-   __luaLock {
-      if! let func = loadScript( luaCode, handlePath, "createHandler" ) {
-         if! let mut obj = func(##) {
-            handler = new UserHandlerWrapper( obj );
-            result = true;
-         } else {
-            print( "illegal return value -- ", handlePath );
+   __asyncLock {
+      if! let handlerRuntime = Runtime.convScript( handlePath ) {
+         if! let func = handlerRuntime.loadScript( "createHandler" ) {
+            __luago {
+               if! let mut obj = func(##) {
+                  handler = new UserHandlerWrapper( obj );
+                  result = true;
+               } else {
+                  print( "illegal return value -- ", handlePath );
+               }
+            }
          }
       }
    }
-   
    return result;
 }
 
@@ -196,21 +228,19 @@ pub fn canAccept( uri:str, headerMap:&Map<str,&List<str>> ) : int, str
 {
    let mut asyncHandler:UserAsyncHandlerWrapper! = nil;
 
-   if canAcceptLuaCode ~= "" {
-      // canAccept は非同期で行なうので、毎回 loadScript する必要がある。
-      // 毎回 loadScript しないと、スレッドが違って動かない。
+   // canAccept は非同期で行なうので、毎回 loadScript する必要がある。
+   // 毎回 loadScript しないと、スレッドが違って動かない。
+   if! let func = canAcceptRuntime.loadScript( "createHandler" ) {
       __luaDepend {
-         if! let func = loadScript( canAcceptLuaCode, "createHandler", "createHandler" ) {
-            if! let mut obj = func(##) {
-               asyncHandler = new UserAsyncHandlerWrapper( obj );
-            } else {
-               print( "illegal return value -- " );
-            }
+         if! let mut obj = func(##) {
+            asyncHandler = new UserAsyncHandlerWrapper( obj );
+         } else {
+            print( "illegal return value -- " );
          }
       }
-      when! asyncHandler {
-         return asyncHandler.canAccept( uri, headerMap )**;
-      }
+   }
+   when! asyncHandler {
+      return asyncHandler.canAccept( uri, headerMap )**;
    }
    return 200, "";
 }

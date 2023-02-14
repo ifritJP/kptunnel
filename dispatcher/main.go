@@ -16,6 +16,8 @@ import (
 
 	. "github.com/ifritJP/LuneScript/src/lune/base/runtime_go"
 	"github.com/ifritJP/kptunnel/dispatcher/lns"
+
+	lnsc "github.com/ifritJP/LuneScript/src/lune/base"
 )
 
 const VERSION = "0.0.1"
@@ -58,6 +60,11 @@ func IsVerbose() bool {
 }
 
 func initLnsRuntime() {
+
+	// lua から lnsc のコードにアクセスするための処理。
+	// Lns_InitModOnce() よりも先に行なう。
+	lnsc.InitBinding()
+
 	Lns_InitModOnce(LnsRuntimeOpt{})
 
 	env := Lns_GetEnv()

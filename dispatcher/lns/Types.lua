@@ -129,22 +129,26 @@ _moduleObj.ReqTunnelInfo = ReqTunnelInfo
 function ReqTunnelInfo._setmeta( obj )
   setmetatable( obj, { __index = ReqTunnelInfo  } )
 end
-function ReqTunnelInfo._new( host, port, connectMode, mode, tunnelArgList, envMap )
+function ReqTunnelInfo._new( id, host, port, connectMode, mode, tunnelArgList, envMap )
    local obj = {}
    ReqTunnelInfo._setmeta( obj )
    if obj.__init then
-      obj:__init( host, port, connectMode, mode, tunnelArgList, envMap )
+      obj:__init( id, host, port, connectMode, mode, tunnelArgList, envMap )
    end
    return obj
 end
-function ReqTunnelInfo:__init( host, port, connectMode, mode, tunnelArgList, envMap )
+function ReqTunnelInfo:__init( id, host, port, connectMode, mode, tunnelArgList, envMap )
 
+   self.id = id
    self.host = host
    self.port = port
    self.connectMode = connectMode
    self.mode = mode
    self.tunnelArgList = tunnelArgList
    self.envMap = envMap
+end
+function ReqTunnelInfo:get_id()
+   return self.id
 end
 function ReqTunnelInfo:get_host()
    return self.host
@@ -180,6 +184,7 @@ end
 
 function ReqTunnelInfo._fromMapSub( obj, val )
    local memInfo = {}
+   table.insert( memInfo, { name = "id", func = _lune._toStr, nilable = false, child = {} } )
    table.insert( memInfo, { name = "host", func = _lune._toStr, nilable = false, child = {} } )
    table.insert( memInfo, { name = "port", func = _lune._toInt, nilable = false, child = {} } )
    table.insert( memInfo, { name = "connectMode", func = ConnectMode._from, nilable = false, child = {} } )
