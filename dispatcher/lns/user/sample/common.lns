@@ -1,0 +1,12 @@
+import go/github:com.ifritJP.LuneScript.src.lune.base.Json;
+
+
+let mut count = 0;
+pub fn func() {
+   count = count + 1;
+
+   let! json = Json.fromStr( '{"test": 123 }' ) {
+      error( "hoge" );
+   };
+   print( __func__, count, json.test );
+}
