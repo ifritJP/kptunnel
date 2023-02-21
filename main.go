@@ -1,3 +1,4 @@
+//go:build !wasm
 // +build !wasm
 
 // -*- coding: utf-8 -*-
@@ -108,6 +109,7 @@ func ParseOpt(
   N: packet count`)
 	ipPattern := cmd.String("ip", "", "allow ip range (192.168.0.1/24)")
 	interval := cmd.Int("int", 20, "keep alive interval")
+	intervalLog := cmd.Bool("intlog", false, "enable keep alive log")
 	ctrl := cmd.String("ctrl", "", "[bench][stop]")
 	prof := cmd.String("prof", "", "profile port. (:1234)")
 	console := cmd.String("console", "", "console port. (:1234)")
@@ -192,7 +194,7 @@ func ParseOpt(
 
 	param := TunnelParam{
 		pass, mode, maskIP, encPass, *encCount, *interval * 1000,
-		getKey(magic), 0, *serverInfo, http.Header{}}
+		*intervalLog, getKey(magic), 0, *serverInfo, http.Header{}}
 	if *ctrl != "" {
 		*omitForward = true
 		if *ctrl == "bench" {

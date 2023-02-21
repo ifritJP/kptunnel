@@ -106,7 +106,7 @@ class DefaultHandler extend (Types.HandleIF ) {
       return new Types.ReqTunnelInfo(
          "%d" (self.id),
          "localhost", self.id, connectMode, mode,
-         [ "../kptunnel", mode, ":10000", "-omit" ],
+         [ "../kptunnel", mode, ":10000", "-omit", "-intlog", "-int", "5" ],
          { "GOGC":"50" } ), "";
    }
    pub fn onEndTunnel( tunnelInfo:&Types.ReqTunnelInfo ) __noasync mut {

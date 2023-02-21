@@ -83,6 +83,7 @@ type TunnelParam struct {
 	encCount int
 	// 無通信を避けるための接続確認の間隔 (ミリ秒)
 	keepAliveInterval int
+	keepAliveLog      bool
 	// magic
 	magic []byte
 	// CTRL_*
@@ -1491,7 +1492,8 @@ func NewPipeInfo(
 }
 
 func startRelaySession(
-	connInfo *ConnInfo, interval int, citServerFlag bool,
+	connInfo *ConnInfo, interval int,
+	enableIntervalLog bool, citServerFlag bool,
 	reconnect func(sessionInfo *SessionInfo) *ConnInfo) *pipeInfo {
 
 	info, newSession := NewPipeInfo(connInfo, citServerFlag, reconnect)
@@ -1521,6 +1523,9 @@ func startRelaySession(
 				}
 			}
 			if !info.connecting {
+				if enableIntervalLog {
+					log.Printf("send keepalive")
+				}
 				sessionInfo.packChan <- PackInfo{nil, PACKET_KIND_DUMMY, CITIID_CTRL}
 			}
 		}
@@ -1771,7 +1776,8 @@ func ListenAndNewConnectWithDialer(
 		len(listenGroup.list), len(localForwardList))
 
 	info := startRelaySession(
-		connInfo, param.keepAliveInterval, len(listenGroup.list) > 0, reconnect)
+		connInfo, param.keepAliveInterval, param.keepAliveLog,
+		len(listenGroup.list) > 0, reconnect)
 
 	for _, listenInfo := range listenGroup.list {
 		go ListenNewConnectSub(listenInfo, info)
@@ -1812,7 +1818,8 @@ func ListenNewConnect(
 	listenGroup *ListenGroup, connInfo *ConnInfo, param *TunnelParam, loop bool,
 	reconnect func(sessionInfo *SessionInfo) *ConnInfo) {
 
-	info := startRelaySession(connInfo, param.keepAliveInterval, true, reconnect)
+	info := startRelaySession(
+		connInfo, param.keepAliveInterval, param.keepAliveLog, true, reconnect)
 
 	for _, listenInfo := range listenGroup.list {
 		go ListenNewConnectSub(listenInfo, info)

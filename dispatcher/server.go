@@ -384,19 +384,22 @@ func startTunnelApp(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) bool {
 	return true
 }
 
-func startClient(conn *ConnInfo, info *TunnelInfo) {
+func startClient(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) {
 	log.Printf("run %s", info)
+	conn.Conn.Write([]byte("start client"))
 
 	cmd, reader, err := startCommand(info)
 	if err != nil {
 		return
 	}
 
+	finChan := make(chan bool, 1)
 	readClient := func() {
 		if _, err := io.Copy(conn.Conn, reader); err != nil {
 			log.Printf("error: ", err)
 		}
 		conn.Conn.Close()
+		finChan <- true
 	}
 	go readClient()
 
@@ -406,6 +409,11 @@ func startClient(conn *ConnInfo, info *TunnelInfo) {
 			break
 		}
 	}
+	if param.Mode == "chunked-server" {
+		log.Printf("wait")
+		<-finChan
+	}
+	log.Printf("kill -- %s", info.reqTunnelInfo.Get_id(info.env))
 	cmd.Process.Kill()
 	cmd.Wait()
 
@@ -444,7 +452,7 @@ func processConnection(conn *ConnInfo, param *TunnelParam, info *TunnelInfo) {
 	} else if info.connectMode == "Disconnect" {
 		stopTunnel(info)
 	} else if info.connectMode == "Client" {
-		startClient(conn, info)
+		startClient(conn, param, info)
 	}
 }
 

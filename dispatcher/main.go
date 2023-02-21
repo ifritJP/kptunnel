@@ -89,6 +89,8 @@ func main() {
 		fmt.Fprintf(cmd.Output(), " mode: \n")
 		fmt.Fprintf(cmd.Output(), "    wsserver\n")
 		fmt.Fprintf(cmd.Output(), "    wsclient\n")
+		fmt.Fprintf(cmd.Output(), "    chunked-server\n")
+		fmt.Fprintf(cmd.Output(), "    chunked-client\n")
 		os.Exit(1)
 	}
 	cmd.Parse(os.Args[1:])
@@ -107,6 +109,10 @@ func main() {
 		case "wsserver":
 			ParseOptServer(mode, cmd.Args()[1:])
 		case "wsclient":
+			ParseOptClient(mode, cmd.Args()[1:])
+		case "chunked-server":
+			ParseOptServer(mode, cmd.Args()[1:])
+		case "chunked-client":
 			ParseOptClient(mode, cmd.Args()[1:])
 		case "test":
 			test()
@@ -225,7 +231,11 @@ func ParseOptServer(mode string, args []string) {
 	var cmd = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	param := ParseOpt(cmd, mode, args)
 
-	StartWebsocketServer(param)
+	if mode == "wsserver" {
+		StartWebsocketServer(param)
+	} else {
+		StartWebChunkedServer(param)
+	}
 }
 
 func ParseOptClient(mode string, args []string) {
@@ -237,14 +247,21 @@ func ParseOptClient(mode string, args []string) {
 
 	param := ParseOpt(cmd, mode, args)
 
-	schema := "ws://"
-	if *tlsFlag {
-		schema = "wss://"
-	}
-	websocketServerInfo := HostInfo{
-		schema, param.serverInfo.Name, param.serverInfo.Port, *wsPath}
+	if mode == "wsclient" {
+		schema := "ws://"
+		if *tlsFlag {
+			schema = "wss://"
+		}
+		websocketServerInfo := HostInfo{
+			schema, param.serverInfo.Name, param.serverInfo.Port, *wsPath}
 
-	ConnectWebScoket(websocketServerInfo.toStr(), *proxyHost, *userAgent, param)
+		ConnectWebScoket(websocketServerInfo.toStr(), *proxyHost, *userAgent, param)
+	} else {
+		ConnectWebChunkClient(
+			fmt.Sprintf(
+				"http://%s:%d%s",
+				param.serverInfo.Name, param.serverInfo.Port, *wsPath))
+	}
 }
 
 func setsignal() {
