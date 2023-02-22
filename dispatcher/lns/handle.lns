@@ -44,11 +44,13 @@ class UserHandlerWrapper extend (Types.HandleIF) {
       uri:str, headerMap:&Map<str,&List<str>> ) __noasync mut : &Types.ReqTunnelInfo!, str
    {
       let mut luaval:Luaval<stem>! = nil;
+      let mut lua_mess:stem! = "";
       let mut val:stem! = nil;
       __luago {
          if! let func = self.obj.getTunnelInfo {
-            let mut work = (func@@form)( self.obj, uri, headerMap );
+            let mut work, mess = (func@@form)( self.obj, uri, headerMap );
             luaval = work;
+            lua_mess = expandLuavalMap( mess );
             val = expandLuavalMap( luaval );
          }
       }
@@ -59,6 +61,9 @@ class UserHandlerWrapper extend (Types.HandleIF) {
             return info, "";
          }
          error( "failed to fromStem -- %s" ( mess) );
+      }
+      when! lua_mess {
+         return nil, lua_mess@@str;
       }
       return nil, "failed to getTunnelInfo";
    }
