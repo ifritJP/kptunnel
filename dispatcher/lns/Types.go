@@ -57,13 +57,12 @@ func Types_ReqTunnelInfo2Stem( obj LnsAny ) LnsAny {
     }
     return obj.(*Types_ReqTunnelInfo).FP
 }
-      
-func Types_ReqTunnelInfo_toSlice__IF[T any](slice []LnsAny) []T {
-   ret := make([]T, len(slice))
-   for index, val := range slice {
-      ret[index] = val.(Types_ReqTunnelInfoDownCast).ToTypes_ReqTunnelInfo().FP.(T)
-   }
-   return ret
+func Types_ReqTunnelInfo_toSlice(slice []LnsAny) []*Types_ReqTunnelInfo {
+    ret := make([]*Types_ReqTunnelInfo, len(slice))
+    for index, val := range slice {
+        ret[index] = val.(Types_ReqTunnelInfoDownCast).ToTypes_ReqTunnelInfo()
+    }
+    return ret
 }
 type Types_ReqTunnelInfoDownCast interface {
     ToTypes_ReqTunnelInfo() *Types_ReqTunnelInfo
