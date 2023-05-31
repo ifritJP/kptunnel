@@ -147,14 +147,12 @@ class Runtime {
          return nil;
       };
       
-      let luaCode;
       let mut front;
-      let option;
       __asyncLock {
-         option = LnsOpt.analyze( [ path, "exe" ] );
+         let option = LnsOpt.analyze( [ path, "exe" ] );
          front = new LnsFront.Front( option ## );
       }
-      luaCode = front.convertLnsCode2LuaCodeWithOpt( option, lnsCode, path## );
+      let luaCode = front.convertLnsCode2LuaCodeWithOpt( lnsCode, path## );
       return new Runtime( front, path, luaCode );
    }
 
